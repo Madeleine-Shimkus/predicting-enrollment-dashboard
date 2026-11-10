@@ -61,10 +61,10 @@ def net_price_effects(g: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def net_price_binned(g: pd.DataFrame):
-    """Net price vs. growth with each school's and each year's average removed."""
+def net_price_binned(g: pd.DataFrame, col: str = "npt4_priv"):
+    """A price measure vs. growth with each school's and each year's average removed."""
     x = g.copy()
-    x["lp_prev"] = np.log(x["npt4_priv"]).groupby(x["unitid"]).shift(1)
+    x["lp_prev"] = np.log(x[col].where(x[col] > 0)).groupby(x["unitid"]).shift(1)
     x = x.dropna(subset=["growth_pct", "lp_prev"])
     for c in ["growth_pct", "lp_prev"]:
         x[c + "_r"] = smf.ols(f"{c} ~ C(unitid) + C(fall)", x).fit().resid
@@ -78,9 +78,11 @@ def net_price_binned(g: pd.DataFrame):
 TEST_OPTIONAL_2021 = [165015, 217156, 190415, 227757, 152080, 179867]
 
 
-def test_optional_event(g: pd.DataFrame, event_year: int = 2021) -> pd.DataFrame:
+def test_optional_event(g: pd.DataFrame, event_year: int = 2021, long: bool = False) -> pd.DataFrame:
     x = g[g["fall"].between(event_year - 3, event_year + 2)].copy()
     x["years_since"] = x["fall"] - event_year
+    if long:
+        return x[x["unitid"].isin(TEST_OPTIONAL_2021 + [BC_ID])][["school", "years_since", "growth_pct"]]
     bc = x[x["unitid"] == BC_ID].set_index("years_since")["growth_pct"]
     others = x[x["unitid"].isin(TEST_OPTIONAL_2021)].groupby("years_since")["growth_pct"].mean()
     return pd.DataFrame({"Boston College": bc, "Other test-optional schools": others})
