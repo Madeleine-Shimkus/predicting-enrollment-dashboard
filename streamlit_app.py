@@ -82,21 +82,54 @@ with tab_forecast:
     )
 
 # ---------------------------------------------------------------- Drivers
+@st.cache_data
+def get_fe_results(d):
+    return M.fixed_effects_regression(d)
+
+
 with tab_drivers:
-    imp = M.factor_importance(model, d)
-    fig = px.bar(imp.sort_values("importance"), x="importance", y="label", color="direction",
-                 orientation="h", color_discrete_map={"Raises applications": "#2f855a",
-                                                      "Lowers applications": BC_COLOR})
-    fig.update_layout(title="Which factors move application growth the most",
-                      xaxis_title="Average impact on yearly growth (mean |SHAP|, log points)",
-                      yaxis_title=None, legend_title=None, legend=dict(orientation="h", y=-0.2))
-    st.plotly_chart(fig, use_container_width=True)
-    st.markdown(
-        "- **Model:** Ridge regression (scikit-learn) on all 15 schools, predicting each year's growth in applications.\n"
-        "- **Bar length:** how much that factor typically pushes the prediction up or down (mean |SHAP|).\n"
-        "- **Color:** whether more of that factor tends to raise or lower applications.\n"
-        "- One-time events (COVID, test-optional, BC's essay) are included so they don't distort the other factors."
+    fe = get_fe_results(d).iloc[::-1]  # plot top-to-bottom in table order
+    fe["significant"] = np.where(fe["p_value"] < 0.05, "Significant (95% CI excludes 0)", "Not significant")
+    fig = go.Figure()
+    for label, color in [("Significant (95% CI excludes 0)", PRED_COLOR), ("Not significant", PEER_COLOR)]:
+        part = fe[fe["significant"] == label]
+        fig.add_scatter(
+            x=part["coef"], y=part["label"], mode="markers", name=label,
+            marker=dict(size=11, color=color),
+            error_x=dict(type="data", symmetric=False, array=part["high"] - part["coef"],
+                         arrayminus=part["coef"] - part["low"], color=color, thickness=2, width=6),
+            customdata=np.c_[part["low"], part["high"], part["p_value"]],
+            hovertemplate="%{y}<br>Effect: %{x:+.3f}<br>95% CI: %{customdata[0]:+.3f} to %{customdata[1]:+.3f}"
+                          "<br>p = %{customdata[2]:.3f}<extra></extra>",
+        )
+    fig.add_vline(x=0, line=dict(color="#888", dash="dash"))
+    fig.update_layout(
+        title="Which prior-year factors predict application growth?",
+        xaxis_title="Change in application growth (log points) per 1 SD increase in predictor",
+        yaxis_title=None, height=520, legend=dict(orientation="h", y=-0.2), margin=dict(l=10),
+        yaxis=dict(categoryorder="array", categoryarray=list(fe["label"])),
     )
+    st.plotly_chart(fig, use_container_width=True)
+    n_obs = int(fe["n"].iloc[0])
+    st.markdown(
+        f"- **Model:** OLS regression with school and year fixed effects ({n_obs} school-years, statsmodels). "
+        "Predictors are standardized, so bars compare directly.\n"
+        "- **Error bars:** 95% confidence intervals, clustered by school.\n"
+        "- **Significant:** prior-year admit rate (+), change in admit rate (−) and 2-year momentum (−). "
+        "Surges tend to cool off the next year.\n"
+        "- Price, aid, debt and student-faculty ratio don't clearly move growth once school and year are accounted for."
+    )
+
+    with st.expander("Forecast model's view (Ridge regression + SHAP)"):
+        imp = M.factor_importance(model, d)
+        fig = px.bar(imp.sort_values("importance"), x="importance", y="label", color="direction",
+                     orientation="h", color_discrete_map={"Raises applications": "#2f855a",
+                                                          "Lowers applications": BC_COLOR})
+        fig.update_layout(xaxis_title="Average impact on yearly growth (mean |SHAP|, log points)",
+                          yaxis_title=None, legend_title=None, legend=dict(orientation="h", y=-0.2))
+        st.plotly_chart(fig, use_container_width=True)
+        st.caption("This is the model behind the Forecast and What if? tabs. "
+                   "Bar length shows how much each factor typically moves the prediction.")
 
 # ---------------------------------------------------------------- What-if
 with tab_whatif:

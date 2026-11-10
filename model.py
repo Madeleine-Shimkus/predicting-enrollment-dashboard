@@ -112,3 +112,57 @@ def factor_importance(model, d: pd.DataFrame) -> pd.DataFrame:
         "importance": np.abs(shap_values).mean(axis=0),
         "direction": np.where(ridge.coef_ >= 0, "Raises applications", "Lowers applications"),
     }).sort_values("importance", ascending=False)
+
+
+# ---------------------------------------------------------------------------
+# Team regression: which prior-year factors predict application growth?
+# OLS with school + year fixed effects, standardized predictors, standard
+# errors clustered by school (t-distribution, 14 df), 95% CI.
+
+FE_PREDICTORS = {
+    "adm_rate": "Admit rate",
+    "yield_rate": "Yield rate",
+    "c150_4": "6-year graduation rate",
+    "adm_rate_chg": "Change in admit rate",
+    "momentum": "Application growth momentum (prior 2 years)",
+    "pctpell": "Share of students on Pell grants",
+    "test_required": "Standardized test required",
+    "pctfloan": "Share of students with federal loans",
+    "log_inst_spend": "Instructional spending per student, log",
+    "log_net_price": "Net price, log",
+    "stufacr": "Student-to-faculty ratio",
+}
+
+
+def fixed_effects_regression(d: pd.DataFrame) -> pd.DataFrame:
+    import statsmodels.formula.api as smf
+
+    d = d.sort_values(["unitid", "fall"]).copy()
+    by_school = d.groupby("unitid")
+    d["yield_rate"] = d["number_enrolled"] / d["number_admitted"]
+    d["adm_rate_chg"] = by_school["adm_rate"].diff()
+    d["momentum"] = d["log_apps"] - by_school["log_apps"].shift(2)
+    d["test_required"] = (d["admcon7"] == 1).astype(float).where(d["admcon7"].notna())
+    d["log_inst_spend"] = np.log(d["inexpfte"])
+    d["log_net_price"] = np.log(d["npt4_priv"])
+
+    lagged = []
+    for col in FE_PREDICTORS:  # every predictor uses the prior year's value
+        d[f"L_{col}"] = d.groupby("unitid")[col].shift(1)
+        lagged.append(f"L_{col}")
+
+    rows = d.dropna(subset=lagged + ["growth"]).copy()
+    for col in lagged:
+        rows[col] = (rows[col] - rows[col].mean()) / rows[col].std()
+
+    formula = "growth ~ " + " + ".join(lagged) + " + C(unitid) + C(fall)"
+    fit = smf.ols(formula, rows).fit(cov_type="cluster", cov_kwds={"groups": rows["unitid"]}, use_t=True)
+    ci = fit.conf_int().loc[lagged]
+    return pd.DataFrame({
+        "label": [f"{name} (prior year)" if "prior 2" not in name else name for name in FE_PREDICTORS.values()],
+        "coef": fit.params[lagged].values,
+        "low": ci[0].values,
+        "high": ci[1].values,
+        "p_value": fit.pvalues[lagged].values,
+        "n": int(fit.nobs),
+    })
