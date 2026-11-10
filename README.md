@@ -8,7 +8,8 @@ endowment, SAT, one-time events) the model found matter most, compared with 14 p
 - **Forecast:** next-year prediction, plus actual vs. predicted applications for past years
 - **What matters most:** fixed-effects regression coefficients with 95% CIs, plus the forecast model's SHAP importance
 - **What if?:** sliders for net price, aid for low-income families, sticker price, SAT and endowment
-- **BC vs. peers:** animated map of applications by school, 2005-2023
+- **Growth vs. peers, Net price, Test-optional, Retention vs. grad:** findings from our Colab notebook
+- **Map:** animated map of applications by school, 2005-2023
 
 **Data:** College Scorecard (prices, aid, SAT, endowment) merged with IPEDS admissions
 (application counts, fall 2005-2023) on UNITID + year. File: `data/bc_peers.csv`.
