@@ -1,151 +1,157 @@
-import streamlit as st
+"""Boston College application forecast dashboard.
+
+Run it locally with:  streamlit run streamlit_app.py
+"""
+import numpy as np
 import pandas as pd
-import math
-from pathlib import Path
+import plotly.express as px
+import plotly.graph_objects as go
+import streamlit as st
 
-# Set the title and favicon that appear in the Browser's tab bar.
-st.set_page_config(
-    page_title='GDP dashboard',
-    page_icon=':earth_americas:', # This is an emoji shortcode. Could be a URL too.
-)
+import model as M
 
-# -----------------------------------------------------------------------------
-# Declare some useful functions.
+st.set_page_config(page_title="BC Application Forecast", page_icon=":mortar_board:", layout="wide")
+
+BC_COLOR, PEER_COLOR, PRED_COLOR = "#8a100b", "#9aa0a6", "#2b6cb0"
+
 
 @st.cache_data
-def get_gdp_data():
-    """Grab GDP data from a CSV file.
+def get_data():
+    d = M.load_data()
+    return d, M.backtest(d)
 
-    This uses caching to avoid having to read the file every time. If we were
-    reading from an HTTP endpoint instead of a file, it's a good idea to set
-    a maximum age to the cache with the TTL argument: @st.cache_data(ttl='1d')
-    """
 
-    # Instead of a CSV on disk, you could read from an HTTP endpoint here too.
-    DATA_FILENAME = Path(__file__).parent/'data/gdp_data.csv'
-    raw_gdp_df = pd.read_csv(DATA_FILENAME)
+@st.cache_resource
+def get_model(d):
+    return M.fit(d)
 
-    MIN_YEAR = 1960
-    MAX_YEAR = 2022
 
-    # The data above has columns like:
-    # - Country Name
-    # - Country Code
-    # - [Stuff I don't care about]
-    # - GDP for 1960
-    # - GDP for 1961
-    # - GDP for 1962
-    # - ...
-    # - GDP for 2022
-    #
-    # ...but I want this instead:
-    # - Country Name
-    # - Country Code
-    # - Year
-    # - GDP
-    #
-    # So let's pivot all those year-columns into two: Year and GDP
-    gdp_df = raw_gdp_df.melt(
-        ['Country Code'],
-        [str(x) for x in range(MIN_YEAR, MAX_YEAR + 1)],
-        'Year',
-        'GDP',
-    )
+d, bt = get_data()
+model = get_model(d)
 
-    # Convert years from string to integers
-    gdp_df['Year'] = pd.to_numeric(gdp_df['Year'])
+bc = d[d["unitid"] == M.BC_ID]
+last_year = int(bc.dropna(subset=["number_applied"])["fall"].max())  # last fall with real counts
+next_year = last_year + 1
+next_row = bc[bc["fall"] == next_year].copy()
+last_apps = float(bc.loc[bc["fall"] == last_year, "number_applied"].iloc[0])
+baseline = float(M.predict_apps(model, next_row, [last_apps])[0])
 
-    return gdp_df
+bc_bt = bt[bt["unitid"] == M.BC_ID]
+bc_error = float((abs(bc_bt["actual"] - bc_bt["predicted"]) / bc_bt["actual"]).mean())
+all_error = float((abs(bt["actual"] - bt["predicted"]) / bt["actual"]).mean())
+naive_error = float((abs(bt["actual"] - bt["no_change_guess"]) / bt["actual"]).mean())
 
-gdp_df = get_gdp_data()
-
-# -----------------------------------------------------------------------------
-# Draw the actual page
-
-# Set the title that appears at the top of the page.
-'''
-# :earth_americas: GDP dashboard
-
-Browse GDP data from the [World Bank Open Data](https://data.worldbank.org/) website. As you'll
-notice, the data only goes to 2022 right now, and datapoints for certain years are often missing.
-But it's otherwise a great (and did I mention _free_?) source of data.
-'''
-
-# Add some spacing
-''
-''
-
-min_value = gdp_df['Year'].min()
-max_value = gdp_df['Year'].max()
-
-from_year, to_year = st.slider(
-    'Which years are you interested in?',
-    min_value=min_value,
-    max_value=max_value,
-    value=[min_value, max_value])
-
-countries = gdp_df['Country Code'].unique()
-
-if not len(countries):
-    st.warning("Select at least one country")
-
-selected_countries = st.multiselect(
-    'Which countries would you like to view?',
-    countries,
-    ['DEU', 'FRA', 'GBR', 'BRA', 'MEX', 'JPN'])
-
-''
-''
-''
-
-# Filter the data
-filtered_gdp_df = gdp_df[
-    (gdp_df['Country Code'].isin(selected_countries))
-    & (gdp_df['Year'] <= to_year)
-    & (from_year <= gdp_df['Year'])
-]
-
-st.header('GDP over time', divider='gray')
-
-''
-
-st.line_chart(
-    filtered_gdp_df,
-    x='Year',
-    y='GDP',
-    color='Country Code',
+st.title("What drives applications to Boston College?")
+st.caption(
+    "BC and 14 peer schools, fall 2005-2024. Data: College Scorecard (prices, aid, SAT, endowment) "
+    "and IPEDS (application counts, which run through fall 2023)."
 )
 
-''
-''
+tab_forecast, tab_drivers, tab_whatif, tab_peers = st.tabs(
+    ["Forecast", "What matters most", "What if?", "BC vs. peers"]
+)
 
+# ---------------------------------------------------------------- Forecast
+with tab_forecast:
+    c1, c2, c3 = st.columns(3)
+    c1.metric(f"Predicted BC applications, fall {next_year}", f"{baseline:,.0f}",
+              f"{baseline / last_apps - 1:+.1%} vs. fall {last_year}")
+    c2.metric(f"Actual BC applications, fall {last_year}", f"{last_apps:,.0f}")
+    c3.metric("Typical miss for BC (backtest)", f"±{bc_error:.0%}",
+              help="Average percent error when each year was predicted using only earlier years.")
 
-first_year = gdp_df[gdp_df['Year'] == from_year]
-last_year = gdp_df[gdp_df['Year'] == to_year]
+    fig = go.Figure()
+    fig.add_scatter(x=bc["fall"], y=bc["number_applied"], name="Actual", mode="lines+markers",
+                    line=dict(color=BC_COLOR, width=3))
+    fig.add_scatter(x=bc_bt["fall"], y=bc_bt["predicted"], name="Model prediction",
+                    mode="lines+markers", line=dict(color=PRED_COLOR, width=2, dash="dash"))
+    fig.add_scatter(x=[last_year, next_year], y=[last_apps, baseline], name=f"Forecast {next_year}",
+                    mode="lines+markers", line=dict(color=PRED_COLOR, width=2, dash="dot"),
+                    marker=dict(size=12, symbol="star"))
+    for year, label in [(2013, "Essay added"), (2020, "COVID"), (2021, "Test-optional")]:
+        fig.add_vline(x=year, line=dict(color="#ccc", dash="dot"))
+        fig.add_annotation(x=year, y=1.04, yref="paper", text=label, showarrow=False, font=dict(size=11))
+    fig.update_layout(title="BC first-year applications: actual vs. predicted", hovermode="x unified",
+                      yaxis_title="Applications", yaxis_tickformat=",", xaxis_dtick=2,
+                      legend=dict(orientation="h", y=-0.15), margin=dict(t=70))
+    st.plotly_chart(fig, use_container_width=True)
+    st.caption(
+        f"Each predicted point was made using only data from earlier years (expanding-window backtest). "
+        f"Across all 15 schools the model's average miss is {all_error:.1%}, vs. {naive_error:.1%} "
+        f"for just guessing \"same as last year\"."
+    )
 
-st.header(f'GDP in {to_year}', divider='gray')
+# ---------------------------------------------------------------- Drivers
+with tab_drivers:
+    imp = M.factor_importance(model, d)
+    fig = px.bar(imp.sort_values("importance"), x="importance", y="label", color="direction",
+                 orientation="h", color_discrete_map={"Raises applications": "#2f855a",
+                                                      "Lowers applications": BC_COLOR})
+    fig.update_layout(title="Which factors move application growth the most",
+                      xaxis_title="Average impact on yearly growth (mean |SHAP|, log points)",
+                      yaxis_title=None, legend_title=None, legend=dict(orientation="h", y=-0.2))
+    st.plotly_chart(fig, use_container_width=True)
+    st.markdown(
+        "- **Model:** Ridge regression (scikit-learn) on all 15 schools, predicting each year's growth in applications.\n"
+        "- **Bar length:** how much that factor typically pushes the prediction up or down (mean |SHAP|).\n"
+        "- **Color:** whether more of that factor tends to raise or lower applications.\n"
+        "- One-time events (COVID, test-optional, BC's essay) are included so they don't distort the other factors."
+    )
 
-''
+# ---------------------------------------------------------------- What-if
+with tab_whatif:
+    st.subheader(f"What if BC changed things for fall {next_year}?")
+    st.caption("Sliders start at what actually happened. Move them to see how the forecast responds.")
 
-cols = st.columns(4)
+    def pct(feature):  # log change -> percent, for slider defaults
+        return float(np.expm1(next_row[feature].iloc[0]) * 100)
 
-for i, country in enumerate(selected_countries):
-    col = cols[i % len(cols)]
+    left, right = st.columns([1, 1])
+    with left:
+        net = st.slider("Net price after aid, % change", -15.0, 15.0, round(pct("net_price_chg"), 1), 0.5)
+        low = st.slider("Net price for $0-30k families, % change", -50.0, 30.0, round(pct("low_inc_price_chg"), 1), 1.0,
+                        help="Lower = more generous aid for low-income families.")
+        cost = st.slider("Sticker price, % change", -10.0, 15.0, round(pct("cost_chg"), 1), 0.5)
+        sat = st.slider("Average SAT, point change", -30, 30, int(next_row["sat_chg"].iloc[0]), 1)
+        endow = st.slider("Endowment, % change", -20.0, 25.0, round(pct("endow_chg"), 1), 1.0)
 
-    with col:
-        first_gdp = first_year[first_year['Country Code'] == country]['GDP'].iat[0] / 1000000000
-        last_gdp = last_year[last_year['Country Code'] == country]['GDP'].iat[0] / 1000000000
+    scenario = next_row.copy()
+    scenario["net_price_chg"] = np.log1p(net / 100)
+    scenario["low_inc_price_chg"] = np.log1p(low / 100)
+    scenario["cost_chg"] = np.log1p(cost / 100)
+    scenario["sat_chg"] = sat
+    scenario["endow_chg"] = np.log1p(endow / 100)
+    what_if = float(M.predict_apps(model, scenario, [last_apps])[0])
+    if abs(what_if - baseline) < 25:  # slider rounding only, no real change
+        what_if = baseline
 
-        if math.isnan(first_gdp):
-            growth = 'n/a'
-            delta_color = 'off'
-        else:
-            growth = f'{last_gdp / first_gdp:,.2f}x'
-            delta_color = 'normal'
+    with right:
+        st.metric(f"Predicted applications, fall {next_year}", f"{what_if:,.0f}",
+                  f"{what_if - baseline:+,.0f} vs. baseline forecast")
+        gauge = go.Figure(go.Bar(x=["Baseline", "Your scenario"], y=[baseline, what_if],
+                                 marker_color=[PEER_COLOR, BC_COLOR], text=[f"{baseline:,.0f}", f"{what_if:,.0f}"],
+                                 textposition="outside"))
+        gauge.update_layout(yaxis_tickformat=",", yaxis_range=[0, max(baseline, what_if) * 1.2],
+                            height=320, margin=dict(t=20))
+        st.plotly_chart(gauge, use_container_width=True)
+    st.caption("College rankings aren't in the College Scorecard data, so there is no ranking slider yet.")
 
-        st.metric(
-            label=f'{country} GDP',
-            value=f'{last_gdp:,.0f}B',
-            delta=growth,
-            delta_color=delta_color
-        )
+# ---------------------------------------------------------------- Peers
+with tab_peers:
+    peers = d.dropna(subset=["number_applied"]).copy()
+    peers["school"] = np.where(peers["unitid"] == M.BC_ID, "Boston College", "Peer")
+    peers["name"] = peers["instnm"].str.replace("University of ", "").str.replace(" University", "")
+    fig = px.scatter_geo(peers, lat="latitude", lon="longitude", size="number_applied", color="school",
+                         hover_name="instnm", hover_data={"number_applied": ":,", "latitude": False,
+                                                          "longitude": False, "school": False},
+                         animation_frame="fall", scope="usa", size_max=40,
+                         color_discrete_map={"Boston College": BC_COLOR, "Peer": PEER_COLOR})
+    fig.update_layout(title="Applications by school, 2005-2023 (press play)", legend_title=None, height=520)
+    st.plotly_chart(fig, use_container_width=True)
+
+    med = peers[peers["unitid"] != M.BC_ID].groupby("fall")["number_applied"].median().reset_index()
+    line = go.Figure()
+    line.add_scatter(x=bc["fall"], y=bc["number_applied"], name="Boston College", line=dict(color=BC_COLOR, width=3))
+    line.add_scatter(x=med["fall"], y=med["number_applied"], name="Peer median", line=dict(color=PEER_COLOR, width=3))
+    line.update_layout(title="BC vs. peer median applications", yaxis_tickformat=",", hovermode="x unified")
+    st.plotly_chart(line, use_container_width=True)
