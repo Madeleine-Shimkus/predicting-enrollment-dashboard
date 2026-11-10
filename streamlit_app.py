@@ -8,6 +8,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
+import findings as F
 import model as M
 
 st.set_page_config(page_title="BC Application Forecast", page_icon=":mortar_board:", layout="wide")
@@ -47,9 +48,11 @@ st.caption(
     "and IPEDS (application counts, which run through fall 2023)."
 )
 
-tab_forecast, tab_drivers, tab_whatif, tab_peers = st.tabs(
-    ["Forecast", "What matters most", "What if?", "BC vs. peers"]
-)
+(tab_forecast, tab_growth, tab_drivers, tab_price, tab_test, tab_retention, tab_whatif,
+ tab_peers) = st.tabs(["Forecast", "Growth vs. peers", "What matters most", "Net price",
+                       "Test-optional", "Retention vs. grad", "What if?", "Map"])
+
+g = F.growth_table(d)
 
 # ---------------------------------------------------------------- Forecast
 with tab_forecast:
@@ -79,6 +82,50 @@ with tab_forecast:
         f"Each predicted point was made using only data from earlier years (expanding-window backtest). "
         f"Across all 15 schools the model's average miss is {all_error:.1%}, vs. {naive_error:.1%} "
         f"for just guessing \"same as last year\"."
+    )
+
+
+# ---------------------------------------------------------------- Growth vs. peers
+with tab_growth:
+    st.subheader("Most of the swings hit every school at once")
+    share_raw = F.year_share(g, "growth_pct")
+    share_no_covid = F.year_share(g[~g["fall"].isin([2020, 2021])], "growth_pct")
+    c1, c2 = st.columns(2)
+    c1.metric("Growth explained just by the year", f"{share_raw:.0%}",
+              help="Share of the variation in yearly growth explained by each year's all-school average.")
+    c2.metric("Same, leaving out 2020-21", f"{share_no_covid:.0%}",
+              help="COVID and test-optional drive most of the shared swings.")
+
+    fig = go.Figure()
+    for uid, part in g.groupby("unitid"):
+        if uid == M.BC_ID:
+            continue
+        fig.add_scatter(x=part["fall"], y=part["growth_pct"], mode="lines", name=part["school"].iloc[0],
+                        line=dict(color=PEER_COLOR, width=1), opacity=0.45, showlegend=False)
+    avg = g.groupby("fall")["growth_pct"].mean()
+    fig.add_scatter(x=avg.index, y=avg.values, name="All-school average", line=dict(color="black", width=2.5, dash="dash"))
+    bc_g = g[g["unitid"] == M.BC_ID]
+    fig.add_scatter(x=bc_g["fall"], y=bc_g["growth_pct"], name="Boston College", line=dict(color=BC_COLOR, width=3))
+    fig.add_hline(y=0, line=dict(color="#888", width=1))
+    fig.update_layout(title="Year-over-year application growth (gray = each peer)", yaxis_title="Growth (%)",
+                      hovermode="closest", legend=dict(orientation="h", y=-0.15))
+    st.plotly_chart(fig, use_container_width=True)
+
+    events = {2013: "Essay added", 2020: "Early Decision + COVID", 2021: "Test-optional"}
+    bars = go.Figure(go.Bar(
+        x=bc_g["fall"], y=bc_g["rel_growth_pct"],
+        marker_color=np.where(bc_g["rel_growth_pct"] >= 0, "#2f855a", BC_COLOR),
+        hovertemplate="Fall %{x}<br>BC vs. peers: %{y:+.1f} pts<extra></extra>"))
+    for year, label in events.items():
+        val = float(bc_g.loc[bc_g["fall"] == year, "rel_growth_pct"].iloc[0])
+        bars.add_annotation(x=year, y=val, text=label, showarrow=True, arrowhead=0, ay=-30 if val > 0 else 30)
+    bars.update_layout(title="BC's growth minus the peer average (peer-relative growth)",
+                       yaxis_title="Percentage points", xaxis_dtick=2)
+    st.plotly_chart(bars, use_container_width=True)
+    st.markdown(
+        "- Big years for all schools (like the 2021 test-optional jump) show up as the dashed line.\n"
+        "- Subtracting the peer average leaves what's special about BC. Its biggest gaps line up with its own policy changes.\n"
+        "- Peer-relative growth is the target in our best-subset search."
     )
 
 # ---------------------------------------------------------------- Drivers
@@ -120,6 +167,19 @@ with tab_drivers:
         "- Price, aid, debt and student-faculty ratio don't clearly move growth once school and year are accounted for."
     )
 
+
+    with st.expander("Best-subset search: best combination of 8 predictors (from our notebook)"):
+        bs = F.BEST_SUBSET_8.iloc[::-1]
+        fig = go.Figure(go.Bar(x=bs["effect"], y=bs["variable"], orientation="h",
+                               marker_color=np.where(bs["effect"] > 0, "#3E9C9C", "#E07B54"),
+                               text=[f"{v:+.1f} {s}" for v, s in zip(bs["effect"], bs["stars"])],
+                               textposition="outside"))
+        fig.update_layout(xaxis_title="Change in peer-relative growth (% pts per 1 SD)", xaxis_range=[-5, 5],
+                          height=380, margin=dict(t=20))
+        st.plotly_chart(fig, use_container_width=True)
+        st.caption("Tried every combination of up to 10 candidate variables and kept the best fit. "
+                   "R² = 0.13 with 8 predictors. *** p<0.01, ** p<0.05.")
+
     with st.expander("Forecast model's view (Ridge regression + SHAP)"):
         imp = M.factor_importance(model, d)
         fig = px.bar(imp.sort_values("importance"), x="importance", y="label", color="direction",
@@ -130,6 +190,98 @@ with tab_drivers:
         st.plotly_chart(fig, use_container_width=True)
         st.caption("This is the model behind the Forecast and What if? tabs. "
                    "Bar length shows how much each factor typically moves the prediction.")
+
+
+# ---------------------------------------------------------------- Net price
+@st.cache_data
+def get_price_results(g):
+    return F.net_price_effects(g), F.net_price_binned(g)
+
+
+with tab_price:
+    st.subheader("Does a higher net price slow application growth?")
+    effects, (points, bins) = get_price_results(g)
+    left, right = st.columns(2)
+    with left:
+        e = effects.iloc[::-1]
+        colors = np.where(e["p_value"] < 0.05, BC_COLOR, PEER_COLOR)
+        fig = go.Figure(go.Scatter(
+            x=e["effect"], y=e["measure"], mode="markers", marker=dict(size=11, color=colors),
+            error_x=dict(type="data", symmetric=False, array=e["high"] - e["effect"],
+                         arrayminus=e["effect"] - e["low"], color="#999"),
+            hovertemplate="%{y}<br>%{x:+.2f} pts<extra></extra>"))
+        fig.add_vline(x=0, line=dict(color="#555"))
+        fig.update_layout(title="Effect of a 10% higher price last year (red = significant)",
+                          xaxis_title="Change in next-year growth (% pts)", height=420)
+        st.plotly_chart(fig, use_container_width=True)
+    with right:
+        fig = go.Figure()
+        fig.add_scatter(x=points["lp_prev_r"] * 100, y=points["growth_pct_r"], mode="markers",
+                        marker=dict(color="#d0d0d0", size=6), name="School-years")
+        fig.add_scatter(x=bins["lp_prev_r"] * 100, y=bins["growth_pct_r"], mode="lines+markers",
+                        line=dict(color=BC_COLOR, width=2), marker=dict(size=8), name="Average of each tenth")
+        fig.update_layout(title="Overall net price: no clear pattern",
+                          xaxis_title="Net price last year vs. school's usual (%)",
+                          yaxis_title="Growth vs. usual (% pts)", height=420, legend=dict(orientation="h", y=-0.25))
+        st.plotly_chart(fig, use_container_width=True)
+    st.markdown(
+        "- Each dot is one regression with school and year fixed effects, clustered by school.\n"
+        "- Net price for most income groups has no clear effect. The intervals all cross zero.\n"
+        "- Only the $110k+ price is significant, and it's positive. Pricier schools may just be in higher demand, so this isn't causal."
+    )
+
+# ---------------------------------------------------------------- Test-optional
+with tab_test:
+    st.subheader("How big was the test-optional effect?")
+    ev = F.test_optional_event(g)
+    fig = go.Figure()
+    bc_higher = ev["Boston College"] >= ev["Other test-optional schools"]
+    for col, color in [("Other test-optional schools", "#4BA3A3"), ("Boston College", "#B5323C")]:
+        above = bc_higher if col == "Boston College" else ~bc_higher
+        fig.add_scatter(x=ev.index, y=ev[col], name=col, mode="lines+markers+text", line=dict(color=color, width=3),
+                        text=[f"{v:+.0f}%" for v in ev[col]], textfont=dict(color=color),
+                        textposition=["top center" if a else "bottom center" for a in above])
+    fig.add_vline(x=0, line=dict(color="gray", dash="dash"))
+    fig.add_hline(y=0, line=dict(color="black", width=1))
+    fig.update_layout(xaxis=dict(tickvals=list(ev.index),
+                                 ticktext=[f"{x:+d} yr" if x else "Went test-optional (fall 2021)" for x in ev.index]),
+                      yaxis_title="Application growth (%)", legend=dict(orientation="h", y=-0.2),
+                      title="Boston College vs. other schools that went test-optional for fall 2021")
+    st.plotly_chart(fig, use_container_width=True)
+    st.markdown(
+        "- Comparison group: Brandeis, Brown, Cornell, Notre Dame, Rice and WashU, which dropped testing the same cycle as BC.\n"
+        f"- They grew **{ev.loc[0, 'Other test-optional schools']:+.0f}%** the year they went test-optional. "
+        f"BC grew **{ev.loc[0, 'Boston College']:+.0f}%**, partly bouncing back from **{ev.loc[-1, 'Boston College']:+.0f}%** "
+        "the year before (Early Decision added).\n"
+        "- Growth was back to normal within 1-2 years, so fall 2021 is flagged in the models."
+    )
+
+# ---------------------------------------------------------------- Retention vs. graduation
+with tab_retention:
+    st.subheader("Are retention and graduation rates saying the same thing?")
+    rv, school_avg, within, r_between, r_within = F.retention_vs_graduation(d)
+    left, right = st.columns(2)
+    with left:
+        fig = px.scatter(school_avg, x="Retention", y="Graduation", text="school", trendline="ols",
+                         color=np.where(school_avg["school"] == "Boston College", "Boston College", "Peer"),
+                         color_discrete_map={"Boston College": BC_COLOR, "Peer": "#1F4E79"})
+        fig.update_traces(textposition="top center", textfont_size=10)
+        fig.update_layout(title=f"Across schools: nearly the same ranking (r = {r_between:.2f})",
+                          xaxis_title="Retention rate (%)", yaxis_title="6-yr graduation rate (%)",
+                          showlegend=False, height=430)
+        st.plotly_chart(fig, use_container_width=True)
+    with right:
+        fig = px.scatter(within, x="Retention", y="Graduation", hover_name="school", opacity=0.6,
+                         color_discrete_sequence=["#1F4E79"])
+        fig.update_layout(title=f"Within a school over time: barely related (r = {r_within:.2f})",
+                          xaxis_title="Retention vs. school's usual (pts)",
+                          yaxis_title="Graduation vs. school's usual (pts)", height=430)
+        st.plotly_chart(fig, use_container_width=True)
+    st.markdown(
+        "- Across schools the two rates rank schools the same way, so they're redundant for comparing schools.\n"
+        "- Within a school they barely change year to year, and neither predicts application growth.\n"
+        "- We keep graduation rate as a school-quality descriptor, not a growth predictor."
+    )
 
 # ---------------------------------------------------------------- What-if
 with tab_whatif:
