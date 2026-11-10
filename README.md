@@ -6,7 +6,7 @@ endowment, SAT, one-time events) the model found matter most, compared with 14 p
 
 **Tabs**
 - **Forecast:** next-year prediction, plus actual vs. predicted applications for past years
-- **What matters most:** ranked factor importance (mean |SHAP| from a Ridge regression)
+- **What matters most:** fixed-effects regression coefficients with 95% CIs, plus the forecast model's SHAP importance
 - **What if?:** sliders for net price, aid for low-income families, sticker price, SAT and endowment
 - **BC vs. peers:** animated map of applications by school, 2005-2023
 
