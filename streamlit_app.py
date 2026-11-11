@@ -16,33 +16,40 @@ import model as M
 st.set_page_config(page_title="What Drives Applications to BC?", page_icon=":eagle:", layout="wide")
 
 # ---------------------------------------------------------------- look and feel
-MAROON, GOLD, INK, MUTED, TEAL = "#8A100B", "#B29D6C", "#2B2622", "#A8A29A", "#2F7F7A"
-POS, NEG = "#2F7F7A", "#C2522D"
+MAROON, GOLD, INK, MUTED, TEAL = "#8A100B", "#C59B2E", "#1A1A1A", "#B5B5B5", "#3E6A8A"
+POS, NEG = "#3E6A8A", "#B23A2E"
+PEER_PALETTE = ["#3E6A8A", "#D08C2E", "#5B8C5A", "#7A5C99", "#8C8C8C", "#C2668A", "#2E9AA0"]
 
 st.markdown(
     """
-    <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Libre+Franklin:wght@400;600;800&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&display=swap" rel="stylesheet">
     <style>
-      html, body, [class*="css"], .stMarkdown, p, li { font-family: 'Inter', sans-serif; }
-      h1, h2, h3, .chapter-title { font-family: 'Fraunces', serif !important; letter-spacing: -0.01em; }
-      .block-container { max-width: 1150px; padding-top: 2.5rem; }
-      .hero { background: linear-gradient(135deg, #8A100B 0%, #5E0B07 100%); color: #FBF8F3;
-              padding: 2.6rem 2.6rem 2.2rem; border-radius: 18px; margin-bottom: 1.6rem; }
-      .hero h1 { color: #FBF8F3 !important; font-size: 2.7rem; margin: 0 0 .5rem; line-height: 1.1; }
-      .hero p { font-size: 1.12rem; opacity: .9; max-width: 720px; margin: 0; }
-      .hero .kicker { color: #E7D7AE; text-transform: uppercase; letter-spacing: .14em; font-size: .78rem;
-                      font-weight: 600; margin-bottom: .8rem; }
-      .chapter { margin-top: 3.2rem; }
-      .chapter-num { display: inline-block; background: #B29D6C; color: #fff; font-weight: 600; border-radius: 999px;
-                     padding: .15rem .75rem; font-size: .78rem; letter-spacing: .1em; text-transform: uppercase; }
-      .chapter-title { font-size: 2rem; font-weight: 700; color: #2B2622; margin: .55rem 0 .35rem; line-height: 1.15; }
-      .lede { font-size: 1.08rem; color: #4A433D; max-width: 780px; margin-bottom: .6rem; }
-      .takeaway { background: #F1EADF; border-left: 5px solid #8A100B; padding: .85rem 1.1rem; border-radius: 8px;
-                  margin: .4rem 0 1rem; font-size: 1rem; }
-      .stat { background: #fff; border: 1px solid #E8E0D4; border-radius: 14px; padding: 1rem 1.2rem; }
-      .stat .v { font-family: 'Fraunces', serif; font-size: 2.1rem; color: #8A100B; font-weight: 700; line-height: 1.1; }
-      .stat .l { color: #6B635B; font-size: .9rem; }
-      [data-testid="stSidebar"] a { color: #8A100B; text-decoration: none; }
+      html, body, .stApp { background: #FFFFFF; }
+      .stMarkdown p, .stMarkdown li { font-family: 'Source Serif 4', Georgia, serif; font-size: 1.06rem; line-height: 1.55; color: #222; }
+      .block-container { max-width: 1040px; padding-top: 3rem; }
+      [data-testid="stSidebar"], [data-testid="stSidebarCollapsedControl"] { display: none; }
+      .kicker { font-family: 'Libre Franklin', sans-serif; font-weight: 600; font-size: .8rem; color: #8A100B;
+                text-transform: uppercase; letter-spacing: .06em; }
+      .headline { font-family: 'Libre Franklin', sans-serif; font-weight: 800; font-size: 3rem; line-height: 1.05;
+                  letter-spacing: -0.025em; color: #111; margin: .4rem 0 .8rem; max-width: 860px; }
+      .dek { font-family: 'Source Serif 4', Georgia, serif; font-size: 1.3rem; line-height: 1.45; color: #333; max-width: 720px; }
+      .byline { font-family: 'Libre Franklin', sans-serif; font-size: .85rem; color: #666; margin: 1.1rem 0 1.6rem;
+                padding-bottom: 1.1rem; border-bottom: 1px solid #DDD; }
+      .byline b { color: #111; font-weight: 600; }
+      .section { margin-top: 3.6rem; border-top: 3px solid #111; padding-top: .7rem; }
+      .section .num { font-family: 'Libre Franklin', sans-serif; font-weight: 800; color: #8A100B; font-size: .95rem; }
+      .section h2 { font-family: 'Libre Franklin', sans-serif !important; font-weight: 800; font-size: 1.75rem;
+                    letter-spacing: -0.015em; line-height: 1.15; color: #111; margin: .15rem 0 .5rem; padding: 0; }
+      .section .lede { font-family: 'Source Serif 4', Georgia, serif; font-size: 1.1rem; line-height: 1.55; color: #333;
+                       max-width: 700px; }
+      .note { font-family: 'Source Serif 4', Georgia, serif; font-size: 1.06rem; line-height: 1.55; color: #222;
+              max-width: 700px; margin: .3rem 0 1rem; }
+      .num-big { font-family: 'Libre Franklin', sans-serif; font-weight: 800; font-size: 2.3rem; color: #111;
+                 line-height: 1; letter-spacing: -0.02em; }
+      .num-label { font-family: 'Libre Franklin', sans-serif; font-size: .85rem; color: #666; margin-top: .35rem;
+                   max-width: 230px; }
+      .stat-wrap { padding: .6rem 0 .4rem; }
+      .source { font-family: 'Libre Franklin', sans-serif; font-size: .78rem; color: #888; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -51,30 +58,30 @@ st.markdown(
 
 def style(fig, height=430, legend=True):
     fig.update_layout(
-        template="simple_white", height=height, font=dict(family="Inter, sans-serif", size=13, color=INK),
+        template="simple_white", height=height, font=dict(family="Libre Franklin, Arial, sans-serif", size=13, color="#333"),
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", margin=dict(l=10, r=10, t=30, b=10),
         hoverlabel=dict(bgcolor="white", font_size=13), showlegend=legend,
         legend=dict(orientation="h", y=-0.18, x=0, title=None),
     )
-    fig.update_xaxes(showgrid=False, linecolor="#D8D0C4")
-    fig.update_yaxes(gridcolor="#EEE7DC", linecolor="rgba(0,0,0,0)", zeroline=False)
+    fig.update_xaxes(showgrid=False, linecolor="#999", ticks="outside", tickcolor="#999")
+    fig.update_yaxes(gridcolor="#E6E6E6", griddash="dot", linecolor="rgba(0,0,0,0)", zeroline=False)
     return fig
 
 
 def chapter(num, anchor, title, lede):
     st.markdown(
-        f'<div class="chapter" id="{anchor}"><span class="chapter-num">Chapter {num}</span>'
-        f'<div class="chapter-title">{title}</div><div class="lede">{lede}</div></div>',
+        f'<div class="section" id="{anchor}"><div class="num">{num}</div><h2>{title}</h2>'
+        f'<div class="lede">{lede}</div></div>',
         unsafe_allow_html=True,
     )
 
 
 def takeaway(text):
-    st.markdown(f'<div class="takeaway">{text}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="note">{text}</div>', unsafe_allow_html=True)
 
 
 def stat(col, value, label):
-    col.markdown(f'<div class="stat"><div class="v">{value}</div><div class="l">{label}</div></div>',
+    col.markdown(f'<div class="stat-wrap"><div class="num-big">{value}</div><div class="num-label">{label}</div></div>',
                  unsafe_allow_html=True)
 
 
@@ -113,29 +120,16 @@ share_all = F.year_share(g, "growth_pct")
 share_no_covid = F.year_share(g[~g["fall"].isin([2020, 2021])], "growth_pct")
 EVENTS = {2013: "Essay added", 2020: "Early Decision + COVID", 2021: "Test-optional"}
 
-# ---------------------------------------------------------------- sidebar
-with st.sidebar:
-    st.markdown("### The story")
-    for num, anchor, label in [
-        (1, "ride", "A bumpy ride"), (2, "everyone", "Everyone moves together"),
-        (3, "choices", "BC's own choices"), (4, "testoptional", "The test-optional rush"),
-        (5, "price", "Does price matter?"), (6, "predicts", "What predicts growth"),
-        (7, "quality", "Quality signals"), (8, "ahead", "Looking ahead"),
-    ]:
-        st.markdown(f"{num}. [{label}](#{anchor})")
-    st.divider()
-    st.caption("BC + 14 peer schools, fall 2005-2023. College Scorecard + IPEDS admissions. "
-               "Capstone project: Ellie El-Fishawy, Francesco Noble, Yennie Park, Madeleine Shimkus, Nolan Senecal.")
-
-# ---------------------------------------------------------------- hero
+# ---------------------------------------------------------------- opening
 st.markdown(
     f"""
-    <div class="hero">
-      <div class="kicker">Boston College · Application trends 2005-2023</div>
-      <h1>What actually drives applications to Boston College?</h1>
-      <p>BC's applications grew from {first_apps:,.0f} to {last_apps:,.0f} in under twenty years, but the path was anything
-      but smooth. We followed BC and 14 peer schools to see what moves the numbers, and what doesn't.</p>
-    </div>
+    <div class="kicker">Boston College admissions, 2005-2023</div>
+    <div class="headline">What moves applications to Boston College?</div>
+    <div class="dek">BC went from {first_apps:,.0f} applicants to {last_apps:,.0f} in under twenty years. The climb was
+    uneven, and the biggest drops lined up with decisions BC made itself. We compared BC with 14 peer schools to see
+    which factors matter.</div>
+    <div class="byline">By <b>Ellie El-Fishawy, Francesco Noble, Yennie Park, Madeleine Shimkus and Nolan Senecal</b>
+    &nbsp;·&nbsp; Data science capstone &nbsp;·&nbsp; Data: College Scorecard, IPEDS</div>
     """,
     unsafe_allow_html=True,
 )
@@ -146,9 +140,9 @@ stat(c3, f"{bc_g['growth_pct'].abs().max():.0f}%", "Biggest one-year swing")
 stat(c4, f"{baseline:,.0f}", f"Our forecast for fall {next_year}")
 
 # ---------------------------------------------------------------- 1. a bumpy ride
-chapter(1, "ride", "A bumpy ride",
-        "BC's applications didn't climb in a straight line. Pick a few peers to compare, and switch to "
-        "<b>indexed</b> view to see who grew fastest regardless of size.")
+chapter(1, "ride", "The climb was not a straight line",
+        "Pick a few peers to compare. The <b>indexed</b> view sets every school to 100 in 2005, so you can see "
+        "who grew fastest regardless of size.")
 names = sorted(g["school"].unique().tolist())
 left, right = st.columns([3, 1])
 with right:
@@ -166,7 +160,7 @@ with left:
     else:
         apps["value"] = apps["number_applied"]
     fig = go.Figure()
-    peer_colors = px.colors.qualitative.Safe
+    peer_colors = PEER_PALETTE
     for i, school in enumerate(picks):
         part = apps[apps["school"] == school]
         fig.add_scatter(x=part["fall"], y=part["value"], name=school, mode="lines",
@@ -199,7 +193,7 @@ with st.expander("See all 15 schools on a map (press play)"):
     st.plotly_chart(style(fig, 520), use_container_width=True)
 
 # ---------------------------------------------------------------- 2. everyone moves together
-chapter(2, "everyone", "Some years, everyone moves together",
+chapter(2, "everyone", "In 2020 and 2021, every school moved together",
         "Each gray line is one school's yearly growth. Drag the slider to spotlight a year and see how the 15 "
         "schools did. In some years nearly everyone rises or falls at once.")
 year = st.select_slider("Spotlight a year", options=sorted(g["fall"].unique()), value=2021)
@@ -215,8 +209,8 @@ with left:
     avg = g.groupby("fall")["growth_pct"].mean()
     fig.add_scatter(x=avg.index, y=avg.values, name="15-school average", line=dict(color=INK, width=2.5, dash="dash"))
     fig.add_scatter(x=bc_g["fall"], y=bc_g["growth_pct"], name="Boston College", line=dict(color=MAROON, width=3.5))
-    fig.add_vrect(x0=year - 0.5, x1=year + 0.5, fillcolor=GOLD, opacity=0.18, line_width=0)
-    fig.add_hline(y=0, line=dict(color="#C9C0B3", width=1))
+    fig.add_vrect(x0=year - 0.5, x1=year + 0.5, fillcolor="#999", opacity=0.15, line_width=0)
+    fig.add_hline(y=0, line=dict(color="#BBBBBB", width=1))
     fig.update_yaxes(title="Growth vs. prior year (%)", ticksuffix="%")
     st.plotly_chart(style(fig, 440), use_container_width=True)
 with right:
@@ -239,7 +233,7 @@ takeaway("Shared shocks like COVID and test-optional move every school at once. 
          "the market mostly isn't the story, so the next question is what's unique to BC.")
 
 # ---------------------------------------------------------------- 3. BC's own choices
-chapter(3, "choices", "BC's biggest swings were its own choices",
+chapter(3, "choices", "BC's biggest drops followed its own policy changes",
         "Here we subtract the average of the other 14 schools from BC's growth each year. What's left is "
         "what made BC different. Hover a bar for details.")
 fig = go.Figure(go.Bar(
@@ -252,7 +246,7 @@ for yr_, label in {**EVENTS, 2015: "Rebound"}.items():
     v = float(bc_g.loc[bc_g["fall"] == yr_, "rel_growth_pct"].iloc[0])
     fig.add_annotation(x=yr_, y=v, text=f"<b>{label}</b><br>{v:+.0f} pts", showarrow=False,
                        yshift=28 if v > 0 else -28, font=dict(size=12, color=INK))
-fig.add_hline(y=0, line=dict(color="#C9C0B3"))
+fig.add_hline(y=0, line=dict(color="#BBBBBB"))
 fig.update_yaxes(title="BC growth minus peer average (pts)")
 fig.update_xaxes(dtick=2)
 st.plotly_chart(style(fig, 440, legend=False), use_container_width=True)
@@ -260,7 +254,7 @@ takeaway("The essay (2013) and Early Decision (2020) each cost BC 15-38 points o
          "Admissions policy moved BC's numbers more than anything in the financial data.")
 
 # ---------------------------------------------------------------- 4. test-optional
-chapter(4, "testoptional", "Test-optional: a one-year sugar rush",
+chapter(4, "testoptional", "Going test-optional gave a one-year bump",
         "Six peers dropped their test requirement the same cycle BC did (fall 2021). Compare BC with their "
         "average, or turn on each school individually.")
 ev = F.test_optional_event(g)
@@ -270,7 +264,7 @@ fig = go.Figure()
 if show_each:
     for i, (school, part) in enumerate(ev_long[ev_long["school"] != "Boston College"].groupby("school")):
         fig.add_scatter(x=part["years_since"], y=part["growth_pct"], name=school, mode="lines+markers",
-                        line=dict(width=1.5, color=px.colors.qualitative.Safe[i]), opacity=0.7)
+                        line=dict(width=1.5, color=PEER_PALETTE[i]), opacity=0.7)
 fig.add_scatter(x=ev.index, y=ev["Other test-optional schools"], name="Average of the six peers",
                 mode="lines+markers", line=dict(color=TEAL, width=3.5, dash="dot" if show_each else "solid"),
                 marker=dict(size=9))
@@ -280,9 +274,9 @@ fig.add_scatter(x=ev.index, y=ev["Boston College"], name="Boston College", mode=
                 textposition=["top center" if b >= p else "bottom center"
                               for b, p in zip(ev["Boston College"], ev["Other test-optional schools"])],
                 textfont=dict(color=MAROON, size=13))
-fig.add_vrect(x0=-0.4, x1=0.4, fillcolor=GOLD, opacity=0.15, line_width=0,
+fig.add_vrect(x0=-0.4, x1=0.4, fillcolor="#999", opacity=0.12, line_width=0,
               annotation_text="Went test-optional", annotation_position="bottom")
-fig.add_hline(y=0, line=dict(color="#C9C0B3"))
+fig.add_hline(y=0, line=dict(color="#BBBBBB"))
 fig.update_xaxes(tickvals=list(ev.index), ticktext=[f"{x:+d} yr" if x else "Fall 2021" for x in ev.index])
 fig.update_yaxes(title="Application growth (%)", ticksuffix="%")
 st.plotly_chart(style(fig, 460), use_container_width=True)
@@ -294,7 +288,7 @@ takeaway("Going test-optional brought a one-time surge, not a new growth rate. T
          "in our models.")
 
 # ---------------------------------------------------------------- 5. price
-chapter(5, "price", "Does price matter? Less than you'd think",
+chapter(5, "price", "Price barely moves applications",
         "If a school gets more expensive, do fewer students apply the next year? Pick a price measure to see "
         "each school-year, with every school's usual level and every year's trend removed.")
 label_to_col = {v: k for k, v in F.PRICE_MEASURES.items()}
@@ -305,14 +299,14 @@ with left:
     fig = go.Figure()
     fig.add_scatter(x=points["lp_prev_r"] * 100, y=points["growth_pct_r"], mode="markers",
                     name="School-years (BC in red)",
-                    marker=dict(color=np.where(points["unitid"] == M.BC_ID, MAROON, "#CFC6B8"), size=8,
+                    marker=dict(color=np.where(points["unitid"] == M.BC_ID, MAROON, "#CBCBCB"), size=8,
                                 line=dict(width=0)),
                     customdata=np.c_[points["school"], points["fall"]],
                     hovertemplate="%{customdata[0]} %{customdata[1]}<br>Price vs usual: %{x:+.1f}%"
                                   "<br>Growth vs usual: %{y:+.1f} pts<extra></extra>")
     fig.add_scatter(x=bins["lp_prev_r"] * 100, y=bins["growth_pct_r"], mode="lines+markers",
                     name="Average of each tenth", line=dict(color=INK, width=3), marker=dict(size=9))
-    fig.add_hline(y=0, line=dict(color="#C9C0B3")); fig.add_vline(x=0, line=dict(color="#C9C0B3"))
+    fig.add_hline(y=0, line=dict(color="#BBBBBB")); fig.add_vline(x=0, line=dict(color="#BBBBBB"))
     fig.update_xaxes(title="Price last year vs. school's usual (%)", ticksuffix="%")
     fig.update_yaxes(title="Growth vs. usual (pts)")
     st.plotly_chart(style(fig, 430), use_container_width=True)
@@ -324,17 +318,17 @@ with right:
         marker=dict(size=[16 if m == measure else 10 for m in e["measure"]],
                     color=[TEAL if s else MUTED for s in sig], line=dict(width=0)),
         error_x=dict(type="data", symmetric=False, array=e["high"] - e["effect"],
-                     arrayminus=e["effect"] - e["low"], color="#C9C0B3", thickness=2),
+                     arrayminus=e["effect"] - e["low"], color="#BBBBBB", thickness=2),
         hovertemplate="%{y}<br>%{x:+.2f} pts per +10% price<extra></extra>"))
     fig.add_vline(x=0, line=dict(color=INK, width=1))
     fig.update_xaxes(title="Pts per +10% price")
-    fig.update_layout(title=dict(text="Effect with 95% CI (teal = significant)", font=dict(size=14)))
+    fig.update_layout(title=dict(text="Effect with 95% CI (blue = significant)", font=dict(size=14)))
     st.plotly_chart(style(fig, 430, legend=False), use_container_width=True)
 takeaway("For most families' price brackets the effect is indistinguishable from zero. The only significant one, "
          "the $110k+ price, goes the <i>wrong</i> way, likely because schools in high demand can charge more.")
 
 # ---------------------------------------------------------------- 6. what predicts growth
-chapter(6, "predicts", "So what does predict growth?",
+chapter(6, "predicts", "Last year's admit rate is the strongest signal",
         "We put 11 of last year's characteristics into one model with school and year fixed effects. "
         "Each dot shows how much growth changes when that factor is one standard deviation higher.")
 only_sig = st.toggle("Only show significant factors", value=False)
@@ -346,7 +340,7 @@ fig = go.Figure(go.Scatter(
     x=f["coef"], y=f["label"], mode="markers",
     marker=dict(size=13, color=[(POS if c > 0 else NEG) if s else MUTED for c, s in zip(f["coef"], f["sig"])]),
     error_x=dict(type="data", symmetric=False, array=f["high"] - f["coef"], arrayminus=f["coef"] - f["low"],
-                 color="#C9C0B3", thickness=2.5, width=6),
+                 color="#BBBBBB", thickness=2.5, width=6),
     customdata=np.c_[f["low"], f["high"], f["p_value"]],
     hovertemplate="%{y}<br>Effect: %{x:+.3f}<br>95% CI %{customdata[0]:+.3f} to %{customdata[1]:+.3f}"
                   "<br>p = %{customdata[2]:.3f}<extra></extra>"))
@@ -383,7 +377,7 @@ with st.expander("Other ways we checked: best-subset search and the forecast mod
         st.plotly_chart(style(fig, 360), use_container_width=True)
 
 # ---------------------------------------------------------------- 7. quality signals
-chapter(7, "quality", "Quality signals tell the same story twice",
+chapter(7, "quality", "Retention and graduation rates overlap",
         "Retention and graduation rates both measure how well a school serves students. Toggle between comparing "
         "schools to each other and following each school over time.")
 rv, school_avg, within, r_between, r_within = F.retention_vs_graduation(d)
@@ -409,7 +403,7 @@ takeaway(f"{note} The two rates are redundant for comparing schools, and neither
          "so we keep graduation rate as a descriptor only.")
 
 # ---------------------------------------------------------------- 8. looking ahead
-chapter(8, "ahead", "Looking ahead: what if?",
+chapter(8, "ahead", f"A forecast for fall {next_year}",
         f"Our forecast model predicts fall {next_year} applications from price, aid, SAT and endowment changes. "
         "Move the sliders to test a scenario. They start at what actually happened.")
 bc_bt = bt[bt["unitid"] == M.BC_ID]
