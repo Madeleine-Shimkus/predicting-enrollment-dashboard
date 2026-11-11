@@ -194,18 +194,12 @@ with st.expander("See all 15 schools on a map (press play)"):
 
 # ---------------------------------------------------------------- 2. everyone moves together
 chapter(2, "everyone", "In 2020 and 2021, every school moved together",
-        "Each gray line is one school's yearly growth. Drag the slider to spotlight a year and see how the 15 "
-        "schools did. In some years nearly everyone rises or falls at once.")
+        "BC's yearly growth compared with the average of all 15 schools. Drag the slider to spotlight a year "
+        "and see how each school did. In some years nearly everyone rises or falls at once.")
 year = st.select_slider("Spotlight a year", options=sorted(g["fall"].unique()), value=2021)
 left, right = st.columns([3, 2])
 with left:
     fig = go.Figure()
-    for uid, part in g.groupby("unitid"):
-        if uid == M.BC_ID:
-            continue
-        fig.add_scatter(x=part["fall"], y=part["growth_pct"], mode="lines", name=part["school"].iloc[0],
-                        line=dict(color=MUTED, width=1), opacity=0.5, showlegend=False,
-                        hovertemplate="%{fullData.name}<br>%{x}: %{y:+.1f}%<extra></extra>")
     avg = g.groupby("fall")["growth_pct"].mean()
     fig.add_scatter(x=avg.index, y=avg.values, name="15-school average", line=dict(color=INK, width=2.5, dash="dash"))
     fig.add_scatter(x=bc_g["fall"], y=bc_g["growth_pct"], name="Boston College", line=dict(color=MAROON, width=3.5))
