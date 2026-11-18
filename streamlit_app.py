@@ -105,8 +105,11 @@ def get_models(data_version):
     feats = within["variable"].tolist()
     numeric = [v for v in across["variable"] if v not in Y.TRAITS]
     traits = [v for v in across["variable"] if v in Y.TRAITS]
-    fit, med = Y.forecaster(data, feats)
-    bt, rmse = Y.backtest(data, feats)
+    # the forecast also uses last year's yield, so a school's recent level carries forward
+    fc_feats = feats + [Y.LAG]
+    lagged = Y.add_lag(data)
+    fit, med = Y.forecaster(lagged, fc_feats)
+    bt, rmse = Y.backtest(lagged, fc_feats)
     afit, amed = Y.across_fit(data, numeric, traits)
     nxt = int(data["fall"].max()) + 1
     X = F.inputs_for_fall(nxt)
@@ -115,7 +118,8 @@ def get_models(data_version):
     cols = [c for c in X.columns if c in last.columns]
     X = X.reindex(last.index)
     X[cols] = X[cols].fillna(last[cols])
-    return dict(feats=feats, numeric=numeric, traits=traits, fit=fit, med=med, bt=bt, rmse=rmse,
+    X[Y.LAG] = last["target"]
+    return dict(fc_feats=fc_feats, feats=feats, numeric=numeric, traits=traits, fit=fit, med=med, bt=bt, rmse=rmse,
                 afit=afit, amed=amed, X=X)
 
 
@@ -126,10 +130,10 @@ next_year = int(data["fall"].max()) + 1
 
 def forecast_for(uid, values):
     row = pd.DataFrame([{**values, "UNITID": uid}])
-    return float(Y.predict(M["fit"], M["med"], row, M["feats"], next_year - 1).iloc[0])
+    return float(Y.predict(M["fit"], M["med"], row, M["fc_feats"], next_year - 1).iloc[0])
 
 
-bc_inputs = M["X"].loc[Y.BC_ID, M["feats"]].to_dict()
+bc_inputs = M["X"].loc[Y.BC_ID, M["fc_feats"]].to_dict()
 bc_forecast = forecast_for(Y.BC_ID, bc_inputs)
 
 n_schools = data["UNITID"].nunique()
@@ -307,6 +311,9 @@ def slider_for(var, value, key):
         lo, hi = max(0.0, round(v) - 15.0), min(100.0, round(v) + 15.0)
         start = float(round(v * 2) / 2)
         out = st.slider(f"{var} (%)", lo, hi, start, 0.5, key=key, format="%.1f%%")
+    elif var == Y.LAG:
+        start = float(round(v * 2) / 2)
+        out = st.slider(f"Fall {last_year} yield (%)", 10.0, 90.0, start, 0.5, key=key, format="%.1f%%")
     elif var == "SAT average":
         start = int(v)
         out = st.slider(var, start - 80, start + 80, start, 5, key=key)
@@ -331,18 +338,19 @@ def slider_for(var, value, key):
 
 chapter(5, "forecast", f"Forecast: fall {next_year} yield",
         f"The model predicts next fall's yield from this fall's numbers. The sliders start at each school's real "
-        f"fall {last_year} values. Move them to test a scenario, or pick another school.")
+        f"fall {last_year} values. Move them to test a scenario, or pick another school. Besides the factors above, "
+        "the forecast also uses last fall's yield, since yield tends to carry over from one year to the next.")
 schools = data.drop_duplicates("UNITID").set_index("UNITID")["school"].sort_values()
 order = [Y.BC_ID] + [u for u in schools.index if u != Y.BC_ID]
 uid = st.selectbox("School", order, format_func=lambda u: schools[u], key="fc_school")
 name = schools[uid]
-base_inputs = M["X"].loc[uid, M["feats"]].to_dict()
+base_inputs = M["X"].loc[uid, M["fc_feats"]].to_dict()
 if st.button("Reset sliders to real values"):
     for k in [k for k in st.session_state if str(k).startswith(f"fc_{uid}_")]:
         del st.session_state[k]
 left, right = st.columns([2, 3])
 with left:
-    scen = {v: slider_for(v, base_inputs[v], f"fc_{uid}_{v}") for v in M["feats"]}
+    scen = {v: slider_for(v, base_inputs[v], f"fc_{uid}_{v}") for v in M["fc_feats"]}
 base_fc = forecast_for(uid, base_inputs)
 scen_fc = forecast_for(uid, scen)
 rmse = M["rmse"]

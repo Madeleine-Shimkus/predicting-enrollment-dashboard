@@ -185,3 +185,14 @@ def across_fit(data, numeric, traits):
     extra = " + ".join([f"Q('{t}')" for t in traits] + (["C(Region)"] if data["Region"].nunique() > 1 else []))
     fit = smf.ols(f"target ~ {_q(numeric)} + {extra} + C(fall)", _filled(data, numeric, med)).fit()
     return fit, med
+
+
+LAG = "Last year yield"
+
+
+def add_lag(data):
+    """Adds last fall's yield (only when last fall exists). Used by the forecast, not the effect charts."""
+    d = data.sort_values(["UNITID", "fall"]).copy()
+    consecutive = d.groupby("UNITID")["fall"].shift(1) == d["fall"] - 1
+    d[LAG] = d.groupby("UNITID")["target"].shift(1).where(consecutive)
+    return d.sort_index()
