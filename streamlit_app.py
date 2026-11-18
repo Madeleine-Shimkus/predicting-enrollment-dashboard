@@ -195,7 +195,7 @@ with left:
                     line=dict(color=MAROON, width=4), marker=dict(size=7))
     fig.update_yaxes(title="Yield (share of admits who enroll)", ticksuffix="%")
     fig.update_layout(hovermode="x unified")
-    st.plotly_chart(style(fig, 450), width="stretch")
+    st.plotly_chart(style(fig, 450), width="stretch", config={"displayModeBar": False})
 takeaway(f"In fall {last_year} BC's yield was {abs(gap_now):.0f} points {'above' if gap_now >= 0 else 'below'} "
          f"the typical peer. Yield mostly reflects how strongly students already prefer a school, so it moves "
          f"slowly from year to year.")
@@ -216,7 +216,7 @@ fig.update_xaxes(title="Rank", showticklabels=len(one) <= 20, dtick=1 if len(one
 fig.update_yaxes(title="Yield", ticksuffix="%")
 if len(one) <= 20:
     fig.update_xaxes(tickvals=one["rank"], ticktext=one["school"], tickangle=-45, title=None)
-st.plotly_chart(style(fig, 420, legend=False), width="stretch")
+st.plotly_chart(style(fig, 420, legend=False), width="stretch", config={"displayModeBar": False})
 st.markdown('<div class="source">Maroon = Boston College · dark gray = the 14 original peers'
             + (" · light gray = other selective private colleges" if big_sample else "") + "</div>",
             unsafe_allow_html=True)
@@ -250,7 +250,7 @@ def effect_bars(e, height):
 
 
 w = sig_w if only_sig and len(sig_w) else within
-st.plotly_chart(effect_bars(w, 120 + 42 * len(w)), width="stretch")
+st.plotly_chart(effect_bars(w, 120 + 42 * len(w)), width="stretch", config={"displayModeBar": False})
 c1, c2, _ = st.columns(3)
 stat(c1, f"{explained:.0%}", "of the year-to-year movement (beyond each school's usual level) these factors explain")
 stat(c2, f"{len(sig_w)} of {len(within)}", "factors with a clear effect (p < 0.05)")
@@ -288,10 +288,10 @@ with left:
         fig.add_scatter(x=xs, y=np.polyval(b, xs), mode="lines", name="Trend", line=dict(color=INK, width=1.5, dash="dot"))
     fig.update_xaxes(title=var + (" (%)" if var in Y.SHARES else ""), type="log" if var in Y.LOGGED else "linear")
     fig.update_yaxes(title="Average yield", ticksuffix="%")
-    st.plotly_chart(style(fig, 440), width="stretch")
+    st.plotly_chart(style(fig, 440), width="stretch", config={"displayModeBar": False})
 with right:
     a = across.head(10)
-    st.plotly_chart(effect_bars(a, 120 + 38 * len(a)), width="stretch")
+    st.plotly_chart(effect_bars(a, 120 + 38 * len(a)), width="stretch", config={"displayModeBar": False})
 st.markdown('<div class="source">Right: the 10 largest effects in the across-school model (year effects and region '
             'held fixed). School traits like Catholic or city campus are yes vs. no, not per SD.</div>',
             unsafe_allow_html=True)
@@ -336,50 +336,74 @@ def slider_for(var, value, key):
     return Y.from_plain(var, out)
 
 
-chapter(5, "forecast", f"Forecast: fall {next_year} yield",
-        f"The model predicts next fall's yield from this fall's numbers. The sliders start at each school's real "
-        f"fall {last_year} values. Move them to test a scenario, or pick another school. Besides the factors above, "
-        "the forecast also uses last fall's yield, since yield tends to carry over from one year to the next.")
+# Things a school can change directly. Everything else in the forecast is held at its real value.
+LEVERS = ["Net price $0–30k", "Net price (all)", "Federal loan share", "Test required"]
+
+uid_default = Y.BC_ID
 schools = data.drop_duplicates("UNITID").set_index("UNITID")["school"].sort_values()
 order = [Y.BC_ID] + [u for u in schools.index if u != Y.BC_ID]
-uid = st.selectbox("School", order, format_func=lambda u: schools[u], key="fc_school")
+uid = st.session_state.get("fc_school", uid_default)
 name = schools[uid]
 base_inputs = M["X"].loc[uid, M["fc_feats"]].to_dict()
-if st.button("Reset sliders to real values"):
-    for k in [k for k in st.session_state if str(k).startswith(f"fc_{uid}_")]:
-        del st.session_state[k]
+base_fc = forecast_for(uid, base_inputs)
+rmse = M["rmse"]
+chapter(5, "forecast", f"We expect {name} to land near {base_fc:.0f}% in fall {next_year}",
+        f"Try changing what {name if uid != Y.BC_ID else 'BC'} controls, like price for low-income families, "
+        "and watch the forecast move.")
+levers = [v for v in LEVERS if v in M["fc_feats"]]
+others = [v for v in M["fc_feats"] if v not in levers]
 left, right = st.columns([2, 3])
 with left:
-    scen = {v: slider_for(v, base_inputs[v], f"fc_{uid}_{v}") for v in M["fc_feats"]}
-base_fc = forecast_for(uid, base_inputs)
+    scen = {v: slider_for(v, base_inputs[v], f"fc_{uid}_{v}") for v in levers}
+    with st.expander("Other factors (kept at real values)"):
+        for v in others:
+            scen[v] = slider_for(v, base_inputs[v], f"fc_{uid}_{v}")
+    if st.button("Reset"):
+        for k in [k for k in st.session_state if str(k).startswith(f"fc_{uid}_")]:
+            del st.session_state[k]
+        st.rerun()
 scen_fc = forecast_for(uid, scen)
-rmse = M["rmse"]
+changed = abs(scen_fc - base_fc) >= 0.05
 hist = data[data["UNITID"] == uid].sort_values("fall")
-bt = M["bt"][M["bt"]["UNITID"] == uid]
 with right:
     fig = go.Figure()
-    fig.add_scatter(x=hist["fall"], y=hist["target"], name=f"{name} actual", mode="lines+markers",
-                    line=dict(color=MAROON if uid == Y.BC_ID else INK, width=3.5), marker=dict(size=7))
-    fig.add_scatter(x=bt["fall"], y=bt["forecast"], name="Model's forecast, made a year ahead", mode="lines+markers",
-                    line=dict(color=TEAL, width=2, dash="dash"), marker=dict(size=6))
-    fig.add_scatter(x=[next_year, next_year], y=[scen_fc - rmse, scen_fc + rmse], mode="lines",
-                    line=dict(color=GOLD, width=10), opacity=0.3, name=f"Typical miss (±{rmse:.1f} pts)")
-    fig.add_scatter(x=[next_year], y=[base_fc], mode="markers", name="Forecast with real values",
-                    marker=dict(size=12, color="white", line=dict(color=TEAL, width=2.5)))
-    fig.add_scatter(x=[last_year, next_year], y=[float(hist["target"].iloc[-1]), scen_fc], mode="lines+markers",
-                    name="Your scenario", line=dict(color=GOLD, width=3, dash="dot"),
-                    marker=dict(size=[0, 20], symbol="star", color=GOLD))
+    fig.add_scatter(x=hist["fall"], y=hist["target"], mode="lines+markers", name="Actual",
+                    line=dict(color=MAROON if uid == Y.BC_ID else INK, width=3.5), marker=dict(size=7),
+                    hovertemplate="Fall %{x}: %{y:.1f}%<extra></extra>")
+    fig.add_scatter(x=[last_year, next_year], y=[float(hist["target"].iloc[-1]), base_fc], mode="lines",
+                    line=dict(color=MUTED, width=2, dash="dot"), hoverinfo="skip")
+    fig.add_scatter(x=[next_year], y=[base_fc], mode="markers",
+                    error_y=dict(type="constant", value=rmse, color=LIGHT, thickness=4, width=10),
+                    marker=dict(size=13, color="white", line=dict(color=INK, width=2.5)),
+                    hovertemplate=f"Forecast: %{{y:.1f}}% (usually within ±{rmse:.1f} pts)<extra></extra>")
+    if changed:
+        fig.add_scatter(x=[next_year], y=[scen_fc], mode="markers",
+                        marker=dict(size=22, symbol="star", color=GOLD, line=dict(color=INK, width=1)),
+                        hovertemplate="Your scenario: %{y:.1f}%<extra></extra>")
     fig.update_yaxes(title="Yield", ticksuffix="%")
-    fig.update_xaxes(range=[hist["fall"].min() - 0.5, next_year + 0.7])
-    fig.update_layout(hovermode="x unified")
-    st.plotly_chart(style(fig, 470), width="stretch")
+    fig.update_xaxes(range=[hist["fall"].min() - 0.5, next_year + 0.8], dtick=2)
+    lo_y = min(hist["target"].min(), base_fc - rmse, scen_fc) - 4
+    hi_y = max(hist["target"].max(), base_fc + rmse, scen_fc) + 5
+    fig.update_yaxes(range=[lo_y, hi_y])
+    st.plotly_chart(style(fig, 430, legend=False), width="stretch", config={"displayModeBar": False})
 c1, c2, c3 = st.columns(3)
-stat(c1, f"{scen_fc:.1f}%", f"{name}, predicted fall {next_year} yield")
-stat(c2, f"{scen_fc - base_fc:+.1f} pts", "from your slider changes")
-stat(c3, f"±{rmse:.1f} pts", "typical miss when we tested on past years")
-takeaway(f"The dashed line shows how the model did on past years, each forecast made using only earlier years. "
-         f"Big misses (like fall {int(bt.loc[(bt['target'] - bt['forecast']).abs().idxmax(), 'fall'])} here) are "
-         "usually market-wide shocks the model can't see coming.")
+stat(c1, f"{base_fc:.1f}%", f"forecast for fall {next_year} (open circle)")
+stat(c2, f"{scen_fc:.1f}%" if changed else "–", "your scenario, gold star" + (f" ({scen_fc - base_fc:+.1f} pts)" if changed else
+                                                                    ": move a slider"))
+stat(c3, f"±{rmse:.0f} pts", "how far off the forecast usually is")
+with st.expander("How accurate is the forecast?"):
+    bt = M["bt"][M["bt"]["UNITID"] == uid]
+    fig = go.Figure()
+    fig.add_scatter(x=hist["fall"], y=hist["target"], mode="lines+markers", name="Actual",
+                    line=dict(color=MAROON if uid == Y.BC_ID else INK, width=3), marker=dict(size=6))
+    fig.add_scatter(x=bt["fall"], y=bt["forecast"], mode="lines+markers", name="What the model forecast a year earlier",
+                    line=dict(color=TEAL, width=2, dash="dash"), marker=dict(size=6))
+    fig.update_yaxes(title="Yield", ticksuffix="%")
+    st.plotly_chart(style(fig, 340), width="stretch", config={"displayModeBar": False})
+    st.markdown(f'<div class="note">We tested the model by forecasting each of the last six years using only earlier '
+                f'years. Across all {n_schools} schools it was off by about {rmse:.1f} points on average. Its biggest '
+                'misses are years like 2020-21, when something hit every school at once.</div>', unsafe_allow_html=True)
+st.selectbox("Forecast a different school", order, format_func=lambda u: schools[u], key="fc_school")
 
 # ---------------------------------------------------------------- 6. build a school
 chapter(6, "build", "Build a school and predict its yield",
@@ -420,7 +444,7 @@ with right:
                     marker=dict(size=26, symbol="star", color=GOLD, line=dict(color=INK, width=1)))
     fig.update_yaxes(visible=False, range=[-1, 1.6])
     fig.update_xaxes(title="Yield", ticksuffix="%")
-    st.plotly_chart(style(fig, 260, legend=False), width="stretch")
+    st.plotly_chart(style(fig, 260, legend=False), width="stretch", config={"displayModeBar": False})
     st.markdown(f'<div class="source">Gold star = your school · maroon = Boston College · gray = real schools, '
                 f'fall {last_year}</div>', unsafe_allow_html=True)
     c1, c2 = st.columns(2)
@@ -457,7 +481,7 @@ with right:
                         marker=dict(size=12, color=MAROON))
     fig.update_xaxes(title="Yield", ticksuffix="%")
     fig.update_yaxes(title="Students admitted", tickformat=",")
-    st.plotly_chart(style(fig, 380), width="stretch")
+    st.plotly_chart(style(fig, 380), width="stretch", config={"displayModeBar": False})
 c1, c2, c3 = st.columns(3)
 stat(c1, f"{admits:,.0f}", "students to admit")
 stat(c2, f"{admits / apps_n:.1%}", "admit rate that implies")
