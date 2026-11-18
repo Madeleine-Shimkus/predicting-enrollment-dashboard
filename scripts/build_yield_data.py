@@ -18,6 +18,9 @@ import numpy as np
 import pandas as pd
 import statsmodels.formula.api as smf
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from features import CANDIDATES  # noqa: E402
+
 warnings.filterwarnings("ignore")
 ROOT = Path(__file__).resolve().parent.parent
 SCORECARD_FILE = ROOT / "data" / "raw" / "scorecard_93_schools.csv"
@@ -73,24 +76,7 @@ df["NONWHITE_SHARE"] = 1 - num("UGDS_WHITE").fillna(num("UGDS_WHITENH"))
 df["EARN_FILLED"] = num("MD_EARN_WNE_P10").groupby(df["UNITID"]).ffill()
 df["APPS"] = num("number_applied")
 
-candidates = {
-    "SAT_AVG":           ("SAT average", False),
-    "APPS":              ("Applications", True),
-    "NPT4_PRIV":         ("Net price (all)", True),
-    "NPT41_PRIV":        ("Net price $0–30k", True),
-    "NPT45_PRIV":        ("Net price $110k+", True),
-    "COST_FILLED":       ("Sticker price", True),
-    "ENDOW_PER_STUDENT": ("Endowment per student", True),
-    "PCTPELL":           ("Pell share", False),
-    "UGDS_NRA":          ("International share", False),
-    "NONWHITE_SHARE":    ("Non-white share", False),
-    "C150_4":            ("6-yr grad rate", False),
-    "RET_FT4":           ("Retention rate", False),
-    "EARN_FILLED":       ("Median earnings (10 yr)", True),
-    "INEXPFTE":          ("Instruction $/student", True),
-    "PCTFLOAN":          ("Federal loan share", False),
-    "UGDS":              ("Undergrad enrollment", True),
-}
+candidates = CANDIDATES
 
 consecutive = df.groupby("UNITID")["fall"].shift(1) == df["fall"] - 1
 def lag(s):

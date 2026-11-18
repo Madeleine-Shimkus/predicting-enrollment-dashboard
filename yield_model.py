@@ -113,3 +113,75 @@ PLAIN = {"Median earnings (10 yr)": "graduates' earnings", "Net price $0–30k":
 def plain(var):
     """Plain-English name for headlines."""
     return PLAIN.get(var, var.lower())
+
+
+# ---------------------------------------------------------------- forecasting
+DOLLARS = {"Net price (all)", "Net price $0–30k", "Net price $110k+", "Sticker price", "Endowment per student",
+           "Median earnings (10 yr)", "Instruction $/student"}
+
+
+def to_plain(var, x):
+    """Model scale -> what a person would type (dollars, %, counts)."""
+    if var in LOGGED:
+        return float(np.exp(x))
+    if var in SHARES:
+        return float(x) * 100
+    return float(x)
+
+
+def from_plain(var, v):
+    if var in LOGGED:
+        return float(np.log(v))
+    if var in SHARES:
+        return v / 100
+    return float(v)
+
+
+def _fe_fit(d, features, extra="C(UNITID)"):
+    return smf.ols(f"target ~ {_q(features)} + {extra} + C(fall)", d).fit()
+
+
+def _filled(d, features, med):
+    d = d.copy()
+    d[features] = d[features].fillna(med)
+    return d
+
+
+def forecaster(data, features):
+    """Within-school model on raw (unstandardized) inputs, for predicting a new fall.
+
+    A new fall's market-wide shift isn't known yet, so it reuses the latest year's effect,
+    the same rule the notebook's cross-validation uses.
+    """
+    med = data[features].median()
+    fit = _fe_fit(_filled(data, features, med), features)
+    return fit, med
+
+
+def predict(fit, med, rows, features, fall_effect_year):
+    r = rows.copy()
+    r[features] = r[features].fillna(med)
+    r["fall"] = fall_effect_year
+    return fit.predict(r)
+
+
+def backtest(data, features, n_years=6):
+    """Each of the last n falls predicted using only earlier falls. Returns predictions + typical miss."""
+    out = []
+    for ty in sorted(data["fall"].unique())[-n_years:]:
+        tr = data[data["fall"] < ty]
+        te = data[(data["fall"] == ty) & data["UNITID"].isin(tr["UNITID"])].copy()
+        fit, med = forecaster(tr, features)
+        te["forecast"] = predict(fit, med, te, features, ty - 1).values
+        out.append(te[["UNITID", "school", "fall", "target", "forecast"]])
+    bt = pd.concat(out, ignore_index=True)
+    rmse = float(np.sqrt(((bt["target"] - bt["forecast"]) ** 2).mean()))
+    return bt, rmse
+
+
+def across_fit(data, numeric, traits):
+    """Across-school model on raw inputs: year effects + region + traits, no school effects."""
+    med = data[numeric].median()
+    extra = " + ".join([f"Q('{t}')" for t in traits] + (["C(Region)"] if data["Region"].nunique() > 1 else []))
+    fit = smf.ols(f"target ~ {_q(numeric)} + {extra} + C(fall)", _filled(data, numeric, med)).fit()
+    return fit, med
