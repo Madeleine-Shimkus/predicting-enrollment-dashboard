@@ -157,7 +157,7 @@ c1, c2, c3, c4 = st.columns(4)
 stat(c1, f"{bc_last:.0f}%", f"BC yield, fall {last_year}")
 stat(c2, f"{bc_last - bc_first:+.0f} pts", f"Change since {first_year}")
 stat(c3, f"#{bc_rank} of {len(latest)}", f"BC's rank in fall {last_year}")
-stat(c4, f"{bc_forecast:.0f}%", f"Our model's prediction for fall {next_year}")
+stat(c4, f"{bc_forecast:.0f}%", f"Expected yield, fall {next_year}")
 
 # ---------------------------------------------------------------- 1. over time
 gap_now = bc_last - peer_med.loc[last_year]
@@ -212,84 +212,109 @@ st.markdown('<div class="source">Maroon = Boston College · dark gray = the 14 o
             + (" · light gray = other selective private colleges" if big_sample else "") + "</div>",
             unsafe_allow_html=True)
 
-# ---------------------------------------------------------------- 3. within a school
-top = within.iloc[0]
+# ---------------------------------------------------------------- 3. which factors matter
+imp = TT["importance"]
+SHORT = {"6-yr grad rate": "graduation rate", "Avg faculty salary": "faculty salary", "Net price (all)": "cost after aid",
+         "Net price $0-30k": "cost for low-income families", "Federal loan share": "share of students with loans",
+         "Median debt": "student debt", "Instruction $/student": "instruction spending",
+         "Student-faculty ratio": "students per faculty member"}
+top_f = imp.index[0]
+# each college's average (fall 2010 on) of each factor next to its average yield
+yrs = traw[traw["fall"] >= T.MIN_YEAR - 1]
+avg_f = yrs.groupby("UNITID")[tfeats].mean()
+avg_y = tdata.groupby(["UNITID", "school"])["y"].mean().reset_index().set_index("UNITID")
+cmp = avg_y.join(avg_f).reset_index()
+cmp["group"] = np.where(cmp["UNITID"] == Y.BC_ID, "Boston College",
+                        np.where(cmp["UNITID"].isin(Y.PEER_IDS), "Original peer", "Other selective private"))
+top_r = cmp[top_f].corr(cmp["y"])
+chapter(3, "factors", f"Colleges with a {'higher' if top_r > 0 else 'lower'} {SHORT[top_f]} keep more of the "
+        "students they admit",
+        "Of the factors we looked at, these do the most to set one college's yield apart from another's. "
+        "Pick one to see how all the colleges compare.")
+left, right = st.columns([2, 3])
+with left:
+    strength = imp.clip(lower=0)
+    label = np.where(strength >= strength.max() * 0.5, "Strong",
+                     np.where(strength >= strength.max() * 0.05, "Some", "Little"))
+    i = strength.iloc[::-1]
+    lab = label[::-1]
+    fig = go.Figure(go.Bar(x=i.values, y=[SHORT[v].capitalize() for v in i.index], orientation="h",
+                           marker_line_width=0, marker_color=[MAROON if l == "Strong" else (DARK_PEER if l == "Some" else LIGHT)
+                                                              for l in lab],
+                           text=list(lab), textposition="outside", cliponaxis=False, hoverinfo="skip"))
+    fig.update_xaxes(visible=False, range=[0, i.max() * 1.35])
+    fig.update_layout(title=dict(text="How much each factor matters", font=dict(size=14, color="#555")))
+    st.plotly_chart(style(fig, 380, legend=False), width="stretch", config={"displayModeBar": False})
+with right:
+    pick = st.selectbox("Compare colleges by", list(imp.index), format_func=lambda v: SHORT[v].capitalize(), key="f_pick")
+    d = cmp.dropna(subset=[pick, "y"]).copy()
+    share = pick in T.SHARES
+    d["x"] = d[pick] * 100 if share else d[pick]
+    fig = go.Figure()
+    for grp, color, size in [("Other selective private", LIGHT, 9), ("Original peer", DARK_PEER, 10),
+                             ("Boston College", MAROON, 15)]:
+        part = d[d["group"] == grp]
+        fig.add_scatter(x=part["x"], y=part["y"], mode="markers+text" if grp == "Boston College" else "markers",
+                        text=part["school"] if grp == "Boston College" else None, textposition="top center",
+                        textfont=dict(color=MAROON, size=13), marker=dict(color=color, size=size, line=dict(width=0)),
+                        customdata=part[["school"]],
+                        hovertemplate="%{customdata[0]}<br>%{x:,.0f}" + ("%" if share else "") +
+                                      "<br>Yield %{y:.0f}%<extra></extra>")
+    bfit = np.polyfit(d["x"], d["y"], 1)
+    xs = np.linspace(d["x"].min(), d["x"].max(), 50)
+    fig.add_scatter(x=xs, y=np.polyval(bfit, xs), mode="lines", line=dict(color=INK, width=1.5, dash="dot"),
+                    hoverinfo="skip")
+    dollars = pick not in T.SHARES and pick != "Student-faculty ratio"
+    fig.update_xaxes(title=T.FRIENDLY[pick] + (" (%)" if share else ""), tickprefix="$" if dollars else "",
+                     ticksuffix="%" if share else "")
+    fig.update_yaxes(title="Average yield", ticksuffix="%")
+    st.plotly_chart(style(fig, 400, legend=False), width="stretch", config={"displayModeBar": False})
+r = d["x"].corr(d["y"])
+bcrow = d[d["UNITID"] == Y.BC_ID]
+bc_txt = ""
+if len(bcrow):
+    bx = float(bcrow["x"].iloc[0])
+    bc_txt = (f" BC's {SHORT[pick]} averages {'$' if dollars else ''}{bx:,.0f}{'%' if share else ''}, "
+              f"{'above' if bx > d['x'].median() else 'below'} the typical college here.")
+direction = "higher" if r > 0 else "lower"
+takeaway(f"Colleges with a higher {SHORT[pick]} tend to have <b>{direction}</b> yield"
+         + (" (a clear pattern)." if abs(r) >= 0.4 else " (a loose pattern)." if abs(r) >= 0.2 else ", but only barely.")
+         + bc_txt + " Each dot is one college, averaged over fall 2010 to 2023.")
+st.markdown('<div class="source">Maroon = Boston College · dark gray = the 14 original peers · light gray = other '
+            'selective private colleges</div>', unsafe_allow_html=True)
+
+# ---------------------------------------------------------------- 4. year to year
 sig_w = within[within["p_value"] < 0.05]
-chapter(3, "within", f"{Y.plain(top['variable']).capitalize()} {'up' if top['effect'] > 0 else 'down'}, yield {'up' if top['effect'] > 0 else 'down'} the next year"
-        if top["p_value"] < 0.05 else "Year to year, no single factor moves yield much",
-        "This model follows each school over time. It removes every school's usual yield and every year's "
-        "market-wide shift, then asks what last year's numbers add. Each bar is the change in yield when a "
-        "factor is one standard deviation higher than usual. Hover for what that means in real units.")
-only_sig = st.toggle("Only show clear effects (p < 0.05)", value=False, key="w_sig")
+top = within.iloc[0]
+chapter(4, "within", "Within the same college, what moved yield from one year to the next",
+        "This compares each college only with itself. When one of these was higher than usual, yield the "
+        "following fall tended to rise (maroon) or fall (blue). Gray means no clear pattern.")
 
 
 def effect_bars(e, height):
     e = e.iloc[::-1]
     sd_text = [Y.describe_sd(data, v) if v in data.columns and v not in Y.TRAITS else "yes vs. no" for v in e["variable"]]
+    names_ = [Y.plain(v).capitalize() for v in e["variable"]]
     fig = go.Figure(go.Bar(
-        x=e["effect"], y=e["variable"], orientation="h", marker_line_width=0,
+        x=e["effect"], y=names_, orientation="h", marker_line_width=0,
         marker_color=[(MAROON if v > 0 else POS) if p < 0.05 else LIGHT for v, p in zip(e["effect"], e["p_value"])],
-        text=[f"{v:+.1f}" for v in e["effect"]], textposition="outside", cliponaxis=False,
-        customdata=np.c_[sd_text, e["p_value"]],
-        hovertemplate="<b>%{y}</b><br>%{x:+.2f} yield pts when last year's value is<br>%{customdata[0]}"
-                      "<br>p = %{customdata[1]:.3f}<extra></extra>"))
-    lim = max(e["effect"].abs().max() * 1.35, 1)
+        text=[f"{v:+.1f} pts" for v in e["effect"]], textposition="outside", cliponaxis=False,
+        customdata=np.c_[sd_text],
+        hovertemplate="<b>%{y}</b><br>Yield moved %{x:+.1f} pts when this was<br>%{customdata[0]} than usual"
+                      "<extra></extra>"))
+    lim = max(e["effect"].abs().max() * 1.4, 1)
     fig.add_vline(x=0, line=dict(color=INK, width=1))
-    fig.update_xaxes(range=[-lim, lim], title="Change in yield (% pts)")
-    fig.update_yaxes(categoryorder="array", categoryarray=list(e["variable"]))
+    fig.update_xaxes(range=[-lim, lim], title="Change in next fall's yield (points)")
+    fig.update_yaxes(categoryorder="array", categoryarray=names_)
     return style(fig, height, legend=False)
 
 
-w = sig_w if only_sig and len(sig_w) else within
-st.plotly_chart(effect_bars(w, 120 + 42 * len(w)), width="stretch", config={"displayModeBar": False})
-c1, c2, _ = st.columns(3)
-stat(c1, f"{explained:.0%}", "of the year-to-year movement (beyond each school's usual level) these factors explain")
-stat(c2, f"{len(sig_w)} of {len(within)}", "factors with a clear effect (p < 0.05)")
-lines = [f"<b>{r.variable}</b> ({r.effect:+.1f} pts per SD)" for r in sig_w.itertuples()]
-takeaway("Clear effects: " + ("; ".join(lines) if lines else "none at the 5% level") +
-         ". Colored bars are significant; maroon raises yield, blue lowers it. Gray bars could be zero. "
-         "Admit rate is left out on purpose: admitting fewer students raises yield almost automatically.")
-
-# ---------------------------------------------------------------- 4. across schools
-chapter(4, "across", "What kind of school keeps the students it admits",
-        "This model compares schools with each other instead. Pick a factor to see each school's average "
-        "against its average yield.")
-numeric_across = [v for v in across["variable"] if v not in Y.TRAITS]
-left, right = st.columns([3, 2])
-with left:
-    var = st.selectbox("Factor", numeric_across, index=0)
-    avg = data.groupby(["UNITID", "school", "group"], as_index=False)[[var, "target"]].mean().dropna()
-    x = np.exp(avg[var]) if var in Y.LOGGED else (avg[var] * 100 if var in Y.SHARES else avg[var])
-    avg["x"] = x
-    fig = go.Figure()
-    for grp, color, size in [("Other selective private", LIGHT, 8), ("Original peer", DARK_PEER, 10),
-                             ("Boston College", MAROON, 15)]:
-        part = avg[avg["group"] == grp]
-        if part.empty:
-            continue
-        fig.add_scatter(x=part["x"], y=part["target"], mode="markers" if grp != "Boston College" else "markers+text",
-                        name=grp if grp != "Original peer" else "14 original peers", text=part["school"],
-                        textposition="top center", textfont=dict(color=MAROON, size=13),
-                        marker=dict(color=color, size=size, line=dict(width=0)),
-                        hovertemplate="%{hovertext}<br>%{x:,.3~f}<br>Yield %{y:.1f}%<extra></extra>",
-                        hovertext=part["school"])
-    if len(avg) > 3:
-        b = np.polyfit(avg["x"], avg["target"], 1)
-        xs = np.linspace(avg["x"].min(), avg["x"].max(), 50)
-        fig.add_scatter(x=xs, y=np.polyval(b, xs), mode="lines", name="Trend", line=dict(color=INK, width=1.5, dash="dot"))
-    fig.update_xaxes(title=var + (" (%)" if var in Y.SHARES else ""), type="log" if var in Y.LOGGED else "linear")
-    fig.update_yaxes(title="Average yield", ticksuffix="%")
-    st.plotly_chart(style(fig, 440), width="stretch", config={"displayModeBar": False})
-with right:
-    a = across.head(10)
-    st.plotly_chart(effect_bars(a, 120 + 38 * len(a)), width="stretch", config={"displayModeBar": False})
-st.markdown('<div class="source">Right: the 10 largest effects in the across-school model (year effects and region '
-            'held fixed). School traits like Catholic or city campus are yes vs. no, not per SD.</div>',
-            unsafe_allow_html=True)
-sig_a = across[across["p_value"] < 0.05].head(4)
-takeaway("Across schools, the clearest differences are " +
-         ", ".join(f"<b>{Y.plain(r.variable)}</b> ({r.effect:+.1f})" for r in sig_a.itertuples()) +
-         ". These describe what high-yield schools look like, not what would change BC's yield on its own.")
+st.plotly_chart(effect_bars(within, 120 + 42 * len(within)), width="stretch", config={"displayModeBar": False})
+ups = [Y.plain(r.variable) for r in sig_w.itertuples() if r.effect > 0]
+downs = [Y.plain(r.variable) for r in sig_w.itertuples() if r.effect < 0]
+takeaway(("When " + " or ".join(ups) + " went up, more admitted students enrolled the next year. " if ups else "")
+         + ("When " + " or ".join(downs) + " went up, fewer did. " if downs else "")
+         + "Hover a bar to see what a typical change looks like in real numbers.")
 
 # ---------------------------------------------------------------- 5. predict BC
 def raw_slider(var, v, fallback, key):
@@ -318,13 +343,12 @@ def raw_slider(var, v, fallback, key):
 
 
 LEVERS = ["Net price $0-30k", "Net price (all)", "Federal loan share", "6-yr grad rate"]
-n_train = TT["train"]["UNITID"].nunique()
 bc_real = latest_raw(Y.BC_ID)
 bc_hist_raw = traw[traw["UNITID"] == Y.BC_ID].sort_values("fall")
-chapter(5, "forecast", f"Our model predicts BC's yield will be about {bc_forecast:.0f}% in fall {next_year}",
-        f"The model learned from {n_train} other colleges and never saw Boston College's data. It predicts yield "
-        f"from eight numbers, like cost after aid and graduation rate. The sliders start at BC's real fall "
-        f"{next_year - 1} numbers. Move one to see how a change would shift the prediction.")
+chapter(5, "forecast", "What would change BC's yield next fall?",
+        f"Based on how these factors line up with yield across {n_schools} colleges, we expect about "
+        f"{bc_forecast:.0f}% of the students BC admits for fall {next_year} to enroll. The sliders start at BC's "
+        f"real fall {next_year - 1} numbers. Move one to see how the expected yield shifts.")
 left, right = st.columns([2, 3])
 with left:
     st.markdown("**What if BC changed...**")
@@ -351,7 +375,7 @@ with right:
     fig.add_scatter(x=[last_year, next_year], y=[last_val, bc_forecast], mode="lines+markers",
                     line=dict(color=MAROON if not changed else MUTED, width=3, dash="dot"),
                     marker=dict(size=[0, 13], color="white", line=dict(color=MAROON if not changed else MUTED, width=3)),
-                    hovertemplate="Prediction: %{y:.1f}%<extra></extra>")
+                    hovertemplate="Expected: %{y:.1f}%<extra></extra>")
     fig.add_annotation(x=last_year, y=last_val, text=f"Fall {last_year}<br><b>{last_val:.0f}%</b>", showarrow=False,
                        xanchor="right", xshift=-10, font=dict(size=13, color=MAROON))
     up = scen_fc >= bc_forecast
@@ -364,7 +388,7 @@ with right:
                            font=dict(size=13, color="#9A7414"))
     fig.add_annotation(x=next_year, y=bc_forecast, xanchor="left", xshift=12, showarrow=False, align="left",
                        yshift=(-16 if up else 16) if changed else 0,
-                       text=(f"Prediction {next_year}<br><b>{bc_forecast:.0f}%</b>" if not changed
+                       text=(f"Expected {next_year}<br><b>{bc_forecast:.0f}%</b>" if not changed
                              else f"No changes<br>{bc_forecast:.0f}%"),
                        font=dict(size=13, color=INK if not changed else "#888"))
     ticks = list(range(int(hist["fall"].min()), next_year + 1, 2))
@@ -375,70 +399,10 @@ with right:
     fig.update_layout(title=dict(text="Share of admitted students who enrolled at BC", font=dict(size=14, color="#555")))
     st.plotly_chart(style(fig, 430, legend=False), width="stretch", config={"displayModeBar": False})
 c1, c2, c3 = st.columns(3)
-stat(c1, f"{bc_forecast:.0f}%", f"predicted yield, fall {next_year}")
-stat(c2, f"±{mae:.0f} pts", "how far off the model usually is for a college it hasn't seen")
+stat(c1, f"{bc_forecast:.0f}%", f"expected yield, fall {next_year}")
+stat(c2, f"{bc_forecast - mae:.0f}–{bc_forecast + mae:.0f}%", "likely range")
 stat(c3, f"{scen_fc:.0f}%" if changed else "–",
      f"with your changes ({scen_fc - bc_forecast:+.1f} pts)" if changed else "with your changes: move a slider")
-
-# ---------------------------------------------------------------- 6. how good is it
-bs = TT["by_school"].copy()
-n_test = len(bs)
-chapter(6, "accuracy", f"Tested on {n_test} colleges it never saw, the model was off by about {mae:.0f} points",
-        f"We hid {n_test} colleges (including BC) while training, then asked the model to predict their yield. "
-        "Each dot is one hidden college: its real average yield against the model's prediction. Dots on the "
-        "line were predicted perfectly.")
-left, right = st.columns([3, 2])
-with left:
-    fig = go.Figure()
-    lo = min(bs["actual"].min(), bs["predicted"].min()) - 4
-    hi = max(bs["actual"].max(), bs["predicted"].max()) + 4
-    fig.add_scatter(x=[lo, hi], y=[lo, hi], mode="lines", line=dict(color="#BBBBBB", width=1.5, dash="dash"),
-                    hoverinfo="skip")
-    fig.add_annotation(x=hi, y=hi, text="Perfect prediction", showarrow=False, xanchor="right", yshift=10,
-                       font=dict(size=12, color="#888"))
-    other = bs[bs["UNITID"] != Y.BC_ID]
-    fig.add_scatter(x=other["actual"], y=other["predicted"], mode="markers",
-                    marker=dict(size=11, color=DARK_PEER, opacity=0.8, line=dict(width=0)), customdata=other[["school"]],
-                    hovertemplate="%{customdata[0]}<br>Real: %{x:.0f}%<br>Predicted: %{y:.0f}%<extra></extra>")
-    b = bs[bs["UNITID"] == Y.BC_ID]
-    fig.add_scatter(x=b["actual"], y=b["predicted"], mode="markers+text", text=["Boston College"],
-                    textposition="middle left", textfont=dict(color=MAROON, size=13),
-                    marker=dict(size=15, color=MAROON), hovertemplate="Boston College<br>Real: %{x:.0f}%<br>"
-                                                                      "Predicted: %{y:.0f}%<extra></extra>")
-    fig.update_xaxes(title="Real average yield", ticksuffix="%", range=[lo, hi])
-    fig.update_yaxes(title="Model's prediction", ticksuffix="%", range=[lo, hi])
-    st.plotly_chart(style(fig, 440, legend=False), width="stretch", config={"displayModeBar": False})
-with right:
-    names = {"Training mean": "Guess the average college", "Training year mean": "Guess that year's average",
-             "Ridge": "Simple model (Ridge)", "Boosting": "Tree model (boosting)", "Blend": "Our model (blend of both)"}
-    sc = TT["scores"]["MAE"].rename(index=names)
-    fig = go.Figure(go.Bar(x=sc.values, y=sc.index, orientation="h", marker_line_width=0,
-                           marker_color=[MAROON if "Our model" in n else LIGHT for n in sc.index],
-                           text=[f"{v:.1f}" for v in sc.values], textposition="outside", cliponaxis=False,
-                           hovertemplate="%{y}: off by %{x:.1f} pts on average<extra></extra>"))
-    fig.update_xaxes(title="Average miss (yield points)", range=[0, sc.max() * 1.3])
-    fig.update_yaxes(autorange="reversed")
-    fig.update_layout(title=dict(text="Smaller is better", font=dict(size=14, color="#555")))
-    st.plotly_chart(style(fig, 300, legend=False), width="stretch", config={"displayModeBar": False})
-c1, c2, c3 = st.columns(3)
-stat(c1, f"{mae:.1f} pts", "average miss for hidden colleges")
-stat(c2, f"{TT['school_r2']:.0%}", "of the differences between colleges the model explains")
-imp = TT["importance"]
-SHORT = {"6-yr grad rate": "Grad rate", "Avg faculty salary": "Faculty pay", "Net price (all)": "Net price",
-         "Net price $0-30k": "Low-income price", "Federal loan share": "Loan share", "Median debt": "Student debt",
-         "Instruction $/student": "Teaching $", "Student-faculty ratio": "Class sizes"}
-stat(c3, SHORT.get(imp.index[0], imp.index[0]), f"what the model leans on most ({T.FRIENDLY[imp.index[0]].lower()})")
-with st.expander("What the model relies on"):
-    i = imp.iloc[::-1]
-    fig = go.Figure(go.Bar(x=i.values, y=[T.FRIENDLY.get(v, v) for v in i.index], orientation="h", marker_line_width=0,
-                           marker_color=[MAROON if x > 0 else LIGHT for x in i.values],
-                           hovertemplate="%{y}: predictions get %{x:.2f} pts worse without it<extra></extra>"))
-    fig.add_vline(x=0, line=dict(color=INK, width=1))
-    fig.update_xaxes(title="How much worse the predictions get without this factor (pts)")
-    st.plotly_chart(style(fig, 360, legend=False), width="stretch", config={"displayModeBar": False})
-    st.markdown('<div class="note">We scrambled one factor at a time and measured how much the predictions for '
-                'hidden colleges got worse. Gray bars mean the model does about as well without that factor.</div>',
-                unsafe_allow_html=True)
 
 # ---------------------------------------------------------------- 7. class planner
 adm = F.admissions()
@@ -446,7 +410,7 @@ bc_adm = adm[(adm["unitid"] == Y.BC_ID)].sort_values("year")
 bc_adm = bc_adm[bc_adm["year"] == bc_adm["year"].max()].iloc[0] if len(bc_adm) else None
 default_class = int(round(bc_adm["number_enrolled"], -1)) if bc_adm is not None else 2400
 default_apps = int(round(bc_adm["number_applied"], -2)) if bc_adm is not None else 36000
-chapter(7, "planner", "How many offers does BC need to make?",
+chapter(6, "planner", "How many offers does BC need to make?",
         "Yield decides how many students BC has to admit to fill a class. Set a class size, the number of "
         "applicants and an expected yield. The yield slider starts at our model's prediction.")
 left, right = st.columns([2, 3])
@@ -476,10 +440,39 @@ takeaway(f"This is why yield matters for planning: at {y_exp:.0f}% yield, missin
          f"{target_class / ((y_exp - 1) / 100) - admits:,.0f} extra offers for the same class, which pushes the admit "
          "rate up.")
 
+# ---------------------------------------------------------------- about the prediction
+bs = TT["by_school"].copy()
+n_test = len(bs)
+st.markdown("<br>", unsafe_allow_html=True)
+with st.expander("About the expected yield: how we checked it"):
+    st.markdown(f'<div class="note">The expected yield in section 5 comes from a model that looks at last year\'s '
+                f'numbers for each college. To check it, we hid {n_test} colleges (including BC) while it learned '
+                f'from the rest, then asked it to estimate the hidden ones. It was off by about {mae:.0f} points on '
+                f'average, compared with {TT["scores"].loc["Training mean", "MAE"]:.0f} points for just guessing the '
+                'average college. Each dot below is one hidden college.</div>', unsafe_allow_html=True)
+    fig = go.Figure()
+    lo = min(bs["actual"].min(), bs["predicted"].min()) - 4
+    hi = max(bs["actual"].max(), bs["predicted"].max()) + 4
+    fig.add_scatter(x=[lo, hi], y=[lo, hi], mode="lines", line=dict(color="#BBBBBB", width=1.5, dash="dash"),
+                    hoverinfo="skip")
+    fig.add_annotation(x=hi, y=hi, text="Exactly right", showarrow=False, xanchor="right", yshift=10,
+                       font=dict(size=12, color="#888"))
+    other = bs[bs["UNITID"] != Y.BC_ID]
+    fig.add_scatter(x=other["actual"], y=other["predicted"], mode="markers",
+                    marker=dict(size=11, color=DARK_PEER, opacity=0.8, line=dict(width=0)), customdata=other[["school"]],
+                    hovertemplate="%{customdata[0]}<br>Real: %{x:.0f}%<br>Estimated: %{y:.0f}%<extra></extra>")
+    b = bs[bs["UNITID"] == Y.BC_ID]
+    fig.add_scatter(x=b["actual"], y=b["predicted"], mode="markers+text", text=["Boston College"],
+                    textposition="middle left", textfont=dict(color=MAROON, size=13), marker=dict(size=15, color=MAROON),
+                    hovertemplate="Boston College<br>Real: %{x:.0f}%<br>Estimated: %{y:.0f}%<extra></extra>")
+    fig.update_xaxes(title="Real average yield", ticksuffix="%", range=[lo, hi])
+    fig.update_yaxes(title="Estimated yield", ticksuffix="%", range=[lo, hi])
+    st.plotly_chart(style(fig, 420, legend=False), width="stretch", config={"displayModeBar": False})
+
 st.markdown("<br><br>", unsafe_allow_html=True)
 st.caption(f"Methods: yield = first-year enrollees / admitted students (IPEDS), fall {first_year}-{last_year}, "
-           f"{n_schools} schools ({'private nonprofit 4-year colleges with admit rate under 50% and 2,000+ undergrads in fall 2019, plus BC and 14 peers' if big_sample else 'BC and 14 peers'}). "
-           "Predictors from College Scorecard, using last year's values; dollar amounts logged; admit rate excluded. "
-           "Within model: school + year fixed effects, variables chosen by forward selection with an expanding-window "
-           "test. Across model: year fixed effects, region and school traits. Standard errors clustered by school "
-           "(statsmodels). Effects are yield points per 1 SD.")
+           f"{n_schools} private nonprofit 4-year colleges (admit rate under 50% and 2,000+ undergrads in fall 2019, "
+           "plus BC and 14 peers). Factors from College Scorecard, using last year's values; admit rate left out. "
+           "Section 3 and 5: Ridge regression + gradient boosting (scikit-learn), averaged, trained with a school-level "
+           "80/20 train/test split; factor strength is permutation importance on the held-out colleges. Section 4: "
+           "school + year fixed effects (statsmodels), effects per 1 standard deviation.")
