@@ -8,6 +8,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 import features as F
+import tts_model as T
 import yield_model as Y
 
 st.set_page_config(page_title="Who Says Yes to BC?", page_icon=":eagle:", layout="wide")
@@ -100,41 +101,31 @@ def get_data(data_version):  # data_version changes when any data file changes, 
 
 
 @st.cache_resource
-def get_models(data_version):
-    data, within, across, _, _ = get_data(data_version)
-    feats = within["variable"].tolist()
-    numeric = [v for v in across["variable"] if v not in Y.TRAITS]
-    traits = [v for v in across["variable"] if v in Y.TRAITS]
-    # the forecast also uses last year's yield, so a school's recent level carries forward
-    fc_feats = feats + [Y.LAG]
-    lagged = Y.add_lag(data)
-    fit, med = Y.forecaster(lagged, fc_feats)
-    bt, rmse = Y.backtest(lagged, fc_feats)
-    afit, amed = Y.across_fit(data, numeric, traits)
-    nxt = int(data["fall"].max()) + 1
-    X = F.inputs_for_fall(nxt)
-    # anything missing for next fall (e.g. applications outside our admissions file): carry last value forward
-    last = data.sort_values("fall").groupby("UNITID").last()
-    cols = [c for c in X.columns if c in last.columns]
-    X = X.reindex(last.index)
-    X[cols] = X[cols].fillna(last[cols])
-    X[Y.LAG] = last["target"]
-    return dict(fc_feats=fc_feats, feats=feats, numeric=numeric, traits=traits, fit=fit, med=med, bt=bt, rmse=rmse,
-                afit=afit, amed=amed, X=X)
+def get_tts(data_version):
+    """The train/test-split model (Yield_TTS notebook): fit once, reused on every slider move."""
+    tdata, traw, tfeats, _ = T.load()
+    return tdata, traw, tfeats, T.evaluate(tdata, tfeats)
 
 
 data, within, across, fitted, explained = get_data(Y.version())
-M = get_models(Y.version())
-next_year = int(data["fall"].max()) + 1
+tdata, traw, tfeats, TT = get_tts(T.version())
+next_year = int(tdata["fall"].max()) + 1
+mae = float(TT["scores"].loc["Blend", "MAE"])
 
 
-def forecast_for(uid, values):
-    row = pd.DataFrame([{**values, "UNITID": uid}])
-    return float(Y.predict(M["fit"], M["med"], row, M["fc_feats"], next_year - 1).iloc[0])
+def latest_raw(uid):
+    """A school's real values for the latest fall (what next fall's prediction uses)."""
+    r = traw[(traw["UNITID"] == uid) & (traw["fall"] == next_year - 1)]
+    return r.iloc[0][tfeats].to_dict() if len(r) else {f: np.nan for f in tfeats}
 
 
-bc_inputs = M["X"].loc[Y.BC_ID, M["fc_feats"]].to_dict()
-bc_forecast = forecast_for(Y.BC_ID, bc_inputs)
+def predict_raw(uid, raw_values):
+    row = {f: (T.transform(f, v) if pd.notna(v) else np.nan) for f, v in raw_values.items()}
+    row.update(fall=next_year - 1, UNITID=uid)   # next fall uses the latest year's effect
+    return float(TT["model"].predict(pd.DataFrame([row]))[0])
+
+
+bc_forecast = predict_raw(Y.BC_ID, latest_raw(Y.BC_ID))
 
 n_schools = data["UNITID"].nunique()
 first_year, last_year = int(data["fall"].min()), int(data["fall"].max())
@@ -166,7 +157,7 @@ c1, c2, c3, c4 = st.columns(4)
 stat(c1, f"{bc_last:.0f}%", f"BC yield, fall {last_year}")
 stat(c2, f"{bc_last - bc_first:+.0f} pts", f"Change since {first_year}")
 stat(c3, f"#{bc_rank} of {len(latest)}", f"BC's rank in fall {last_year}")
-stat(c4, f"{bc_forecast:.0f}%", f"Our forecast for fall {next_year} (±{M['rmse']:.0f} pts)")
+stat(c4, f"{bc_forecast:.0f}%", f"Our model's prediction for fall {next_year}")
 
 # ---------------------------------------------------------------- 1. over time
 gap_now = bc_last - peer_med.loc[last_year]
@@ -300,192 +291,154 @@ takeaway("Across schools, the clearest differences are " +
          ", ".join(f"<b>{Y.plain(r.variable)}</b> ({r.effect:+.1f})" for r in sig_a.itertuples()) +
          ". These describe what high-yield schools look like, not what would change BC's yield on its own.")
 
-# ---------------------------------------------------------------- 5. forecast
-FRIENDLY = {
-    "Net price $0–30k": "Yearly cost after aid, families earning under $30k",
-    "Net price (all)": "Yearly cost after aid, average aided student",
-    "Net price $110k+": "Yearly cost after aid, families earning over $110k",
-    "Federal loan share": "Students taking federal loans",
-    "Median earnings (10 yr)": "Graduates' median salary, 10 years out",
-    "Undergrad enrollment": "Undergraduate enrollment",
-    "Endowment per student": "Endowment per student",
-    "Sticker price": "Sticker price (before aid)",
-    "Instruction $/student": "Instruction spending per student",
-    "6-yr grad rate": "Six-year graduation rate",
-    "Retention rate": "First-year retention rate",
-    "SAT average": "Average SAT of enrolled students",
-}
+# ---------------------------------------------------------------- 5. predict BC
+def raw_slider(var, v, fallback, key):
+    """Slider in real units starting at the real value. Untouched -> returns the real value exactly
+    (even if it's missing, so the model handles it the same way the notebook does)."""
+    lab = T.FRIENDLY.get(var, var)
+    start_val = v if pd.notna(v) else fallback
+    if pd.isna(start_val):
+        return v
+    if var in T.SHARES:
+        x = start_val * 100
+        start = float(round(x * 2) / 2)
+        out = st.slider(f"{lab} (%)", max(0.0, round(x) - 15.0), min(100.0, round(x) + 15.0), start, 0.5,
+                        key=key, format="%.1f%%")
+        return v if out == start else out / 100
+    if var == "Student-faculty ratio":
+        start = int(round(start_val))
+        out = st.slider(lab, max(3, start - 6), start + 6, start, 1, key=key)
+        return v if out == start else float(out)
+    k = start_val / 1000          # dollars, shown in thousands
+    step = 0.1 if k < 20 else 0.5
+    lo, hi = round(k * 0.6 / step) * step, round(k * 1.4 / step) * step
+    start = min(max(round(k / step) * step, lo), hi)
+    out = st.slider(lab, lo, hi, start, step, key=key, format="$%.1fk")
+    return v if out == start else out * 1000
 
 
-def slider_for(var, value, key):
-    """A slider in plain units (dollars, %, counts) that starts at the real value.
-    Returns the model-scale value; untouched sliders return the exact real value."""
-    v = Y.to_plain(var, value)
-    lab = FRIENDLY.get(var, var)
-    if var == "Test required":
-        return 1.0 if st.toggle("Require SAT/ACT scores", value=bool(value), key=key) else 0.0
-    if var in Y.SHARES:
-        lo, hi = max(0.0, round(v) - 15.0), min(100.0, round(v) + 15.0)
-        start = float(round(v * 2) / 2)
-        out = st.slider(f"{lab} (%)", lo, hi, start, 0.5, key=key, format="%.1f%%")
-    elif var == Y.LAG:
-        start = float(round(v * 2) / 2)
-        out = st.slider(f"Fall {last_year} yield (%)", 10.0, 90.0, start, 0.5, key=key, format="%.1f%%")
-    elif var == "SAT average":
-        start = int(v)
-        out = st.slider(lab, start - 80, start + 80, start, 5, key=key)
-    elif var in Y.DOLLARS and v >= 10000:   # show as $58.5k
-        k = v / 1000
-        step = 0.5 if k < 200 else 5.0
-        lo, hi = round(k * 0.6 / step) * step, round(k * 1.4 / step) * step
-        start = min(max(round(k / step) * step, lo), hi)
-        out = st.slider(lab, lo, hi, start, step, key=key, format="$%.1fk")
-        if out == start:
-            return value
-        return Y.from_plain(var, out * 1000)
-    else:
-        step = int(10 ** max(int(np.log10(max(v, 1))) - 2, 0))
-        lo, hi = int(v * 0.6 // step * step), int(v * 1.4 // step * step)
-        start = min(max(int(round(v / step) * step), lo), hi)
-        out = st.slider(lab, lo, hi, start, step, key=key, format="$%d" if var in Y.DOLLARS else "%d")
-    if out == start:
-        return value
-    return Y.from_plain(var, out)
-
-
-# Things a school can change directly. Everything else in the forecast is held at its real value.
-LEVERS = ["Net price $0–30k", "Net price (all)", "Federal loan share", "Test required"]
-
-uid_default = Y.BC_ID
-schools = data.drop_duplicates("UNITID").set_index("UNITID")["school"].sort_values()
-order = [Y.BC_ID] + [u for u in schools.index if u != Y.BC_ID]
-uid = st.session_state.get("fc_school", uid_default)
-name = schools[uid]
-base_inputs = M["X"].loc[uid, M["fc_feats"]].to_dict()
-base_fc = forecast_for(uid, base_inputs)
-rmse = M["rmse"]
-short = name if uid != Y.BC_ID else "BC"
-lo_r, hi_r = base_fc - rmse, base_fc + rmse
-chapter(5, "forecast", f"We expect {name}'s yield to be about {base_fc:.0f}% in fall {next_year}",
-        f"That means about {base_fc:.0f} of every 100 admitted students would enroll. The sliders start at "
-        f"{short}'s real numbers. Move one to see how a change would shift the forecast.")
-levers = [v for v in LEVERS if v in M["fc_feats"]]
-others = [v for v in M["fc_feats"] if v not in levers]
+LEVERS = ["Net price $0-30k", "Net price (all)", "Federal loan share", "6-yr grad rate"]
+n_train = TT["train"]["UNITID"].nunique()
+bc_real = latest_raw(Y.BC_ID)
+bc_hist_raw = traw[traw["UNITID"] == Y.BC_ID].sort_values("fall")
+chapter(5, "forecast", f"Our model predicts BC's yield will be about {bc_forecast:.0f}% in fall {next_year}",
+        f"The model learned from {n_train} other colleges and never saw Boston College's data. It predicts yield "
+        f"from eight numbers, like cost after aid and graduation rate. The sliders start at BC's real fall "
+        f"{next_year - 1} numbers. Move one to see how a change would shift the prediction.")
 left, right = st.columns([2, 3])
 with left:
-    st.markdown("**What if " + short + " changed...**")
-    scen = {v: slider_for(v, base_inputs[v], f"fc_{uid}_{v}") for v in levers}
-    with st.expander("More factors the forecast uses"):
-        for v in others:
-            scen[v] = slider_for(v, base_inputs[v], f"fc_{uid}_{v}")
+    st.markdown("**What if BC changed...**")
+    scen = {}
+    for v in [f for f in LEVERS if f in tfeats]:
+        scen[v] = raw_slider(v, bc_real[v], bc_hist_raw[v].dropna().iloc[-1] if bc_hist_raw[v].notna().any() else np.nan,
+                             f"tt_{v}")
+    with st.expander("More factors the model uses"):
+        for v in [f for f in tfeats if f not in LEVERS]:
+            fb = bc_hist_raw[v].dropna().iloc[-1] if bc_hist_raw[v].notna().any() else np.nan
+            scen[v] = raw_slider(v, bc_real[v], fb, f"tt_{v}")
     if st.button("Back to real numbers"):
-        for k in [k for k in st.session_state if str(k).startswith(f"fc_{uid}_")]:
+        for k in [k for k in st.session_state if str(k).startswith("tt_")]:
             del st.session_state[k]
         st.rerun()
-scen_fc = forecast_for(uid, scen)
-changed = abs(scen_fc - base_fc) >= 0.05
-hist = data[data["UNITID"] == uid].sort_values("fall")
+scen_fc = predict_raw(Y.BC_ID, scen)
+changed = abs(scen_fc - bc_forecast) >= 0.05
+hist = data[data["UNITID"] == Y.BC_ID].sort_values("fall")
 last_val = float(hist["target"].iloc[-1])
-line_color = MAROON if uid == Y.BC_ID else INK
 with right:
     fig = go.Figure()
-    fig.add_scatter(x=hist["fall"], y=hist["target"], mode="lines+markers",
-                    line=dict(color=line_color, width=3.5), marker=dict(size=7),
-                    hovertemplate="Fall %{x}: %{y:.1f}%<extra></extra>")
-    fig.add_scatter(x=[last_year, next_year], y=[last_val, base_fc], mode="lines+markers",
-                    line=dict(color=line_color if not changed else MUTED, width=3, dash="dot"),
-                    marker=dict(size=[0, 13], color="white", line=dict(color=line_color if not changed else MUTED,
-                                                                      width=3)),
-                    hovertemplate="Forecast: %{y:.1f}%<extra></extra>")
+    fig.add_scatter(x=hist["fall"], y=hist["target"], mode="lines+markers", line=dict(color=MAROON, width=3.5),
+                    marker=dict(size=7), hovertemplate="Fall %{x}: %{y:.1f}%<extra></extra>")
+    fig.add_scatter(x=[last_year, next_year], y=[last_val, bc_forecast], mode="lines+markers",
+                    line=dict(color=MAROON if not changed else MUTED, width=3, dash="dot"),
+                    marker=dict(size=[0, 13], color="white", line=dict(color=MAROON if not changed else MUTED, width=3)),
+                    hovertemplate="Prediction: %{y:.1f}%<extra></extra>")
     fig.add_annotation(x=last_year, y=last_val, text=f"Fall {last_year}<br><b>{last_val:.0f}%</b>", showarrow=False,
-                       xanchor="right", xshift=-10, font=dict(size=13, color=line_color))
+                       xanchor="right", xshift=-10, font=dict(size=13, color=MAROON))
+    up = scen_fc >= bc_forecast
     if changed:
         fig.add_scatter(x=[last_year, next_year], y=[last_val, scen_fc], mode="lines+markers",
                         line=dict(color=GOLD, width=3, dash="dot"), marker=dict(size=[0, 14], color=GOLD),
                         hovertemplate="With your changes: %{y:.1f}%<extra></extra>")
-    up = scen_fc >= base_fc
-    fig.add_annotation(x=next_year, y=base_fc, xanchor="left", xshift=12, showarrow=False,
-                       yshift=(-16 if up else 16) if changed else 0, align="left",
-                       text=(f"Forecast {next_year}<br><b>{base_fc:.0f}%</b>" if not changed else f"No changes<br>{base_fc:.0f}%"),
-                       font=dict(size=13, color=INK if not changed else "#888"))
-    if changed:
         fig.add_annotation(x=next_year, y=scen_fc, xanchor="left", xshift=12, yshift=16 if up else -16,
                            showarrow=False, align="left", text=f"Your changes<br><b>{scen_fc:.0f}%</b>",
                            font=dict(size=13, color="#9A7414"))
-    fig.update_yaxes(title=None, ticksuffix="%")
+    fig.add_annotation(x=next_year, y=bc_forecast, xanchor="left", xshift=12, showarrow=False, align="left",
+                       yshift=(-16 if up else 16) if changed else 0,
+                       text=(f"Prediction {next_year}<br><b>{bc_forecast:.0f}%</b>" if not changed
+                             else f"No changes<br>{bc_forecast:.0f}%"),
+                       font=dict(size=13, color=INK if not changed else "#888"))
     ticks = list(range(int(hist["fall"].min()), next_year + 1, 2))
     fig.update_xaxes(range=[hist["fall"].min() - 0.5, next_year + 5.5], tickvals=ticks, showline=False)
-    fig.update_yaxes(range=[min(hist["target"].min(), scen_fc) - 4, max(hist["target"].max(), scen_fc) + 6])
-    fig.update_layout(margin=dict(r=10), title=dict(text=f"Share of admitted students who enrolled, {short}",
-                                                    font=dict(size=14, color="#555")))
+    fig.update_yaxes(title=None, ticksuffix="%",
+                     range=[min(hist["target"].min(), scen_fc, bc_forecast) - 4,
+                            max(hist["target"].max(), scen_fc, bc_forecast) + 6])
+    fig.update_layout(title=dict(text="Share of admitted students who enrolled at BC", font=dict(size=14, color="#555")))
     st.plotly_chart(style(fig, 430, legend=False), width="stretch", config={"displayModeBar": False})
 c1, c2, c3 = st.columns(3)
-stat(c1, f"{base_fc:.0f}%", f"forecast yield, fall {next_year}")
-stat(c2, f"{lo_r:.0f}–{hi_r:.0f}%", "likely range (past forecasts were usually this close)")
+stat(c1, f"{bc_forecast:.0f}%", f"predicted yield, fall {next_year}")
+stat(c2, f"±{mae:.0f} pts", "how far off the model usually is for a college it hasn't seen")
 stat(c3, f"{scen_fc:.0f}%" if changed else "–",
-     f"with your changes ({scen_fc - base_fc:+.1f} pts)" if changed else "with your changes: move a slider")
-with st.expander("How accurate is the forecast?"):
-    bt = M["bt"][M["bt"]["UNITID"] == uid]
-    fig = go.Figure()
-    fig.add_scatter(x=hist["fall"], y=hist["target"], mode="lines+markers", name="Actual",
-                    line=dict(color=MAROON if uid == Y.BC_ID else INK, width=3), marker=dict(size=6))
-    fig.add_scatter(x=bt["fall"], y=bt["forecast"], mode="lines+markers", name="What the model forecast a year earlier",
-                    line=dict(color=TEAL, width=2, dash="dash"), marker=dict(size=6))
-    fig.update_yaxes(title="Yield", ticksuffix="%")
-    st.plotly_chart(style(fig, 340), width="stretch", config={"displayModeBar": False})
-    st.markdown(f'<div class="note">We tested the model by forecasting each of the last six years using only earlier '
-                f'years. Across all {n_schools} schools it was off by about {rmse:.1f} points on average. Its biggest '
-                'misses are years like 2020-21, when something hit every school at once.</div>', unsafe_allow_html=True)
-st.selectbox("Forecast a different school", order, format_func=lambda u: schools[u], key="fc_school")
+     f"with your changes ({scen_fc - bc_forecast:+.1f} pts)" if changed else "with your changes: move a slider")
 
-# ---------------------------------------------------------------- 6. build a school
-chapter(6, "build", "Build a school and predict its yield",
-        "This uses the across-school model. It starts as Boston College. Change its traits and numbers to see "
-        "what yield a school like that would usually get, and where it would rank.")
-top_numeric = across[~across["variable"].isin(Y.TRAITS)].head(6)["variable"].tolist()
-build = M["X"].loc[Y.BC_ID, M["numeric"]].to_dict()
-left, right = st.columns([2, 3])
+# ---------------------------------------------------------------- 6. how good is it
+bs = TT["by_school"].copy()
+n_test = len(bs)
+chapter(6, "accuracy", f"Tested on {n_test} colleges it never saw, the model was off by about {mae:.0f} points",
+        f"We hid {n_test} colleges (including BC) while training, then asked the model to predict their yield. "
+        "Each dot is one hidden college: its real average yield against the model's prediction. Dots on the "
+        "line were predicted perfectly.")
+left, right = st.columns([3, 2])
 with left:
-    bc_row = data[data["UNITID"] == Y.BC_ID].iloc[-1]
-    for t in M["traits"]:
-        build[t] = float(st.toggle(t, value=bool(bc_row[t]), key=f"b_{t}"))
-    regions = sorted(data["Region"].dropna().unique())
-    build["Region"] = st.selectbox("Region", regions, index=regions.index(bc_row["Region"]), key="b_region")
-    for v in top_numeric:
-        build[v] = slider_for(v, build[v], f"b_{v}")
-    held = [v for v in M["numeric"] if v not in top_numeric]
-    if held:
-        st.markdown(f'<div class="source">Held at BC\'s values: {", ".join(held)}.</div>', unsafe_allow_html=True)
-row = pd.DataFrame([{**build, "fall": last_year}])
-row[M["numeric"]] = row[M["numeric"]].fillna(M["amed"])
-built = float(M["afit"].predict(row).iloc[0])
-row_bc = pd.DataFrame([{**M["X"].loc[Y.BC_ID, M["numeric"]].to_dict(), **{t: float(bc_row[t]) for t in M["traits"]},
-                        "Region": bc_row["Region"], "fall": last_year}])
-row_bc[M["numeric"]] = row_bc[M["numeric"]].fillna(M["amed"])
-built_bc = float(M["afit"].predict(row_bc).iloc[0])
-pool = latest.copy()
-rank = int((pool["target"] > built).sum()) + 1
-near = pool.iloc[(pool["target"] - built).abs().argsort()[:3]]
-with right:
     fig = go.Figure()
-    fig.add_scatter(x=pool["target"], y=np.zeros(len(pool)), mode="markers", name=f"Real schools, fall {last_year}",
-                    marker=dict(size=12, color=[MAROON if u == Y.BC_ID else LIGHT for u in pool["UNITID"]],
-                                line=dict(width=0)),
-                    customdata=pool[["school"]], hovertemplate="%{customdata[0]}: %{x:.1f}%<extra></extra>")
-    fig.add_scatter(x=[built], y=[0], mode="markers+text", name="Your school", text=[f"<b>Your school</b><br>{built:.1f}%"],
-                    textposition="top center", textfont=dict(color=GOLD, size=14),
-                    marker=dict(size=26, symbol="star", color=GOLD, line=dict(color=INK, width=1)))
-    fig.update_yaxes(visible=False, range=[-1, 1.6])
-    fig.update_xaxes(title="Yield", ticksuffix="%")
-    st.plotly_chart(style(fig, 260, legend=False), width="stretch", config={"displayModeBar": False})
-    st.markdown(f'<div class="source">Gold star = your school · maroon = Boston College · gray = real schools, '
-                f'fall {last_year}</div>', unsafe_allow_html=True)
-    c1, c2 = st.columns(2)
-    stat(c1, f"{built:.1f}%", "predicted yield for your school")
-    stat(c2, f"#{rank} of {len(pool) + 1}", f"where it would rank in fall {last_year}")
-    takeaway("Closest real schools: " + ", ".join(f"{r.school} ({r.target:.0f}%)" for r in near.itertuples())
-             + f". A school with BC's exact profile would be expected at {built_bc:.1f}%; BC's actual was "
-             f"{bc_last:.1f}%.")
+    lo = min(bs["actual"].min(), bs["predicted"].min()) - 4
+    hi = max(bs["actual"].max(), bs["predicted"].max()) + 4
+    fig.add_scatter(x=[lo, hi], y=[lo, hi], mode="lines", line=dict(color="#BBBBBB", width=1.5, dash="dash"),
+                    hoverinfo="skip")
+    fig.add_annotation(x=hi, y=hi, text="Perfect prediction", showarrow=False, xanchor="right", yshift=10,
+                       font=dict(size=12, color="#888"))
+    other = bs[bs["UNITID"] != Y.BC_ID]
+    fig.add_scatter(x=other["actual"], y=other["predicted"], mode="markers",
+                    marker=dict(size=11, color=DARK_PEER, opacity=0.8, line=dict(width=0)), customdata=other[["school"]],
+                    hovertemplate="%{customdata[0]}<br>Real: %{x:.0f}%<br>Predicted: %{y:.0f}%<extra></extra>")
+    b = bs[bs["UNITID"] == Y.BC_ID]
+    fig.add_scatter(x=b["actual"], y=b["predicted"], mode="markers+text", text=["Boston College"],
+                    textposition="middle left", textfont=dict(color=MAROON, size=13),
+                    marker=dict(size=15, color=MAROON), hovertemplate="Boston College<br>Real: %{x:.0f}%<br>"
+                                                                      "Predicted: %{y:.0f}%<extra></extra>")
+    fig.update_xaxes(title="Real average yield", ticksuffix="%", range=[lo, hi])
+    fig.update_yaxes(title="Model's prediction", ticksuffix="%", range=[lo, hi])
+    st.plotly_chart(style(fig, 440, legend=False), width="stretch", config={"displayModeBar": False})
+with right:
+    names = {"Training mean": "Guess the average college", "Training year mean": "Guess that year's average",
+             "Ridge": "Simple model (Ridge)", "Boosting": "Tree model (boosting)", "Blend": "Our model (blend of both)"}
+    sc = TT["scores"]["MAE"].rename(index=names)
+    fig = go.Figure(go.Bar(x=sc.values, y=sc.index, orientation="h", marker_line_width=0,
+                           marker_color=[MAROON if "Our model" in n else LIGHT for n in sc.index],
+                           text=[f"{v:.1f}" for v in sc.values], textposition="outside", cliponaxis=False,
+                           hovertemplate="%{y}: off by %{x:.1f} pts on average<extra></extra>"))
+    fig.update_xaxes(title="Average miss (yield points)", range=[0, sc.max() * 1.3])
+    fig.update_yaxes(autorange="reversed")
+    fig.update_layout(title=dict(text="Smaller is better", font=dict(size=14, color="#555")))
+    st.plotly_chart(style(fig, 300, legend=False), width="stretch", config={"displayModeBar": False})
+c1, c2, c3 = st.columns(3)
+stat(c1, f"{mae:.1f} pts", "average miss for hidden colleges")
+stat(c2, f"{TT['school_r2']:.0%}", "of the differences between colleges the model explains")
+imp = TT["importance"]
+SHORT = {"6-yr grad rate": "Grad rate", "Avg faculty salary": "Faculty pay", "Net price (all)": "Net price",
+         "Net price $0-30k": "Low-income price", "Federal loan share": "Loan share", "Median debt": "Student debt",
+         "Instruction $/student": "Teaching $", "Student-faculty ratio": "Class sizes"}
+stat(c3, SHORT.get(imp.index[0], imp.index[0]), f"what the model leans on most ({T.FRIENDLY[imp.index[0]].lower()})")
+with st.expander("What the model relies on"):
+    i = imp.iloc[::-1]
+    fig = go.Figure(go.Bar(x=i.values, y=[T.FRIENDLY.get(v, v) for v in i.index], orientation="h", marker_line_width=0,
+                           marker_color=[MAROON if x > 0 else LIGHT for x in i.values],
+                           hovertemplate="%{y}: predictions get %{x:.2f} pts worse without it<extra></extra>"))
+    fig.add_vline(x=0, line=dict(color=INK, width=1))
+    fig.update_xaxes(title="How much worse the predictions get without this factor (pts)")
+    st.plotly_chart(style(fig, 360, legend=False), width="stretch", config={"displayModeBar": False})
+    st.markdown('<div class="note">We scrambled one factor at a time and measured how much the predictions for '
+                'hidden colleges got worse. Gray bars mean the model does about as well without that factor.</div>',
+                unsafe_allow_html=True)
 
 # ---------------------------------------------------------------- 7. class planner
 adm = F.admissions()
@@ -495,7 +448,7 @@ default_class = int(round(bc_adm["number_enrolled"], -1)) if bc_adm is not None 
 default_apps = int(round(bc_adm["number_applied"], -2)) if bc_adm is not None else 36000
 chapter(7, "planner", "How many offers does BC need to make?",
         "Yield decides how many students BC has to admit to fill a class. Set a class size, the number of "
-        "applicants and an expected yield. The yield slider starts at our forecast.")
+        "applicants and an expected yield. The yield slider starts at our model's prediction.")
 left, right = st.columns([2, 3])
 with left:
     target_class = st.slider("Target first-year class", 1500, 3500, default_class, 10)
