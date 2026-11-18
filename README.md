@@ -28,16 +28,15 @@ The dashboard reads three files in `data/`, the same three the Colab notebook sa
 - `yield_within_effects.csv`
 - `yield_across_effects.csv`
 
-Right now they hold the **15-school** version (BC + 14 peers). To switch to all 93 schools,
-replace these three files with the ones from Colab. Nothing else needs to change: the text,
-charts and sliders update from the files.
+They hold the full **93-school** results from Colab. To update, replace these three files
+(and `data/raw/admissions_yield.csv`) with new ones from Colab. The text, charts and sliders
+update from the files.
 
 Forecast inputs (next fall) come from `data/raw/scorecard_93_schools.csv` and any
 `data/raw/admissions*.csv` file, via `features.py`.
 
 `scripts/build_yield_data.py` rebuilds the three files without Colab from
-`data/raw/scorecard_93_schools.csv` plus an admissions file (default:
-`data/raw/admissions_15_schools.csv`).
+`data/raw/scorecard_93_schools.csv` plus `data/raw/admissions_yield.csv`. It reproduces the Colab results exactly.
 
 ## Run it on your own computer
 

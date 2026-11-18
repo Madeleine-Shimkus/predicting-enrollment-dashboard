@@ -4,8 +4,7 @@ This is the same pipeline as Capstone_Yield_Model.ipynb (steps 4-8), minus the p
 the IPEDS download. It needs the IPEDS admissions counts as a CSV with columns
 unitid, year, number_applied, number_admitted, number_enrolled.
 
-    python scripts/build_yield_data.py                                   # 15 schools (default)
-    python scripts/build_yield_data.py data/raw/admissions_yield.csv     # all 93, once you have it
+    python scripts/build_yield_data.py   # uses data/raw/admissions_yield.csv
 
 Writes data/yield_model_data.csv, data/yield_within_effects.csv, data/yield_across_effects.csv,
 the same three files the notebook saves to Google Drive.
@@ -24,7 +23,7 @@ from features import CANDIDATES  # noqa: E402
 warnings.filterwarnings("ignore")
 ROOT = Path(__file__).resolve().parent.parent
 SCORECARD_FILE = ROOT / "data" / "raw" / "scorecard_93_schools.csv"
-ADMISSIONS_FILE = Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / "data" / "raw" / "admissions_15_schools.csv"
+ADMISSIONS_FILE = Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / "data" / "raw" / "admissions_yield.csv"
 OUT = ROOT / "data"
 
 SCHOOL_NAMES = {123961: "USC", 131496: "Georgetown", 139658: "Emory", 152080: "Notre Dame",
