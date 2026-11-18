@@ -1,34 +1,46 @@
-# What drives applications to Boston College?
+# Who says yes to Boston College?
 
-A Streamlit dashboard for our capstone project. It forecasts next year's first-year
-applications to Boston College and shows which factors (price after aid, sticker price,
-endowment, SAT, one-time events) the model found matter most, compared with 14 peer schools.
+A Streamlit dashboard for our capstone project. It looks at **yield**, the share of admitted
+students who enroll, at Boston College and other selective private colleges, and shows which
+factors move it.
 
-**The story (8 chapters, one scrolling page)**
-1. A bumpy ride: BC vs. any peers you pick, raw or indexed, with BC policy changes marked
-2. Everyone moves together: yearly growth for all 15 schools with a year spotlight slider
-3. BC's own choices: BC's growth minus the peer average
-4. The test-optional rush: BC vs. the six peers that went test-optional the same cycle
-5. Does price matter?: fixed-effects price effects and a binned scatter for each price measure
-6. What predicts growth: 11-factor fixed-effects regression with 95% CIs (plus best-subset and SHAP views)
-7. Quality signals: retention vs. graduation, across schools and within schools
-8. Looking ahead: next-year forecast with what-if sliders
+**The story (7 chapters, one scrolling page)**
+1. BC's yield over time vs. the 14 original peers and any school you pick
+2. Where BC ranks in a given year
+3. Within-school model: what moves a school's yield from one year to the next
+4. Across-school model: what kind of school has high yield (with a pick-a-factor scatter)
+5. Forecast next fall's yield for BC or any school, with sliders that start at the real values,
+   plus how the model did when it forecast past years a year ahead
+6. Build a school: set traits and numbers, get a predicted yield and where it would rank
+7. Class planner: offers needed and admit rate for a target class size and expected yield
 
-**Data:** College Scorecard (prices, aid, SAT, endowment) merged with IPEDS admissions
-(application counts, fall 2005-2023) on UNITID + year. File: `data/bc_peers.csv`.
+**Model:** same as `Capstone_Yield_Model.ipynb`. Yield = enrolled / admitted (IPEDS).
+Predictors are last year's College Scorecard values (admit rate left out on purpose).
+Within model: school + year fixed effects, variables picked by forward selection with an
+expanding-window test. Across model: year fixed effects plus region and school traits.
+Standard errors clustered by school.
 
-**Model:** `model.py`. Ridge regression (scikit-learn) on all 15 schools, predicting each
-year's growth in applications. Tested with an expanding-window backtest (each year predicted
-using only earlier years).
+## Data files
+
+The dashboard reads three files in `data/`, the same three the Colab notebook saves to Drive:
+
+- `yield_model_data.csv`
+- `yield_within_effects.csv`
+- `yield_across_effects.csv`
+
+They hold the full **93-school** results from Colab. To update, replace these three files
+(and `data/raw/admissions_yield.csv`) with new ones from Colab. The text, charts and sliders
+update from the files.
+
+Forecast inputs (next fall) come from `data/raw/scorecard_93_schools.csv` and any
+`data/raw/admissions*.csv` file, via `features.py`.
+
+`scripts/build_yield_data.py` rebuilds the three files without Colab from
+`data/raw/scorecard_93_schools.csv` plus `data/raw/admissions_yield.csv`. It reproduces the Colab results exactly.
 
 ## Run it on your own computer
 
-1. Install Python 3.10 or newer from python.org.
-2. Open Terminal in this folder and run:
-
-   ```
-   pip install -r requirements.txt
-   streamlit run streamlit_app.py
-   ```
-
-3. Your browser opens the dashboard at http://localhost:8501.
+```
+pip install -r requirements.txt
+streamlit run streamlit_app.py
+```
