@@ -301,28 +301,45 @@ takeaway("Across schools, the clearest differences are " +
          ". These describe what high-yield schools look like, not what would change BC's yield on its own.")
 
 # ---------------------------------------------------------------- 5. forecast
+FRIENDLY = {
+    "Net price $0–30k": "Yearly cost after aid, families earning under $30k",
+    "Net price (all)": "Yearly cost after aid, average aided student",
+    "Net price $110k+": "Yearly cost after aid, families earning over $110k",
+    "Federal loan share": "Students taking federal loans",
+    "Median earnings (10 yr)": "Graduates' median salary, 10 years out",
+    "Undergrad enrollment": "Undergraduate enrollment",
+    "Endowment per student": "Endowment per student",
+    "Sticker price": "Sticker price (before aid)",
+    "Instruction $/student": "Instruction spending per student",
+    "6-yr grad rate": "Six-year graduation rate",
+    "Retention rate": "First-year retention rate",
+    "SAT average": "Average SAT of enrolled students",
+}
+
+
 def slider_for(var, value, key):
     """A slider in plain units (dollars, %, counts) that starts at the real value.
     Returns the model-scale value; untouched sliders return the exact real value."""
     v = Y.to_plain(var, value)
+    lab = FRIENDLY.get(var, var)
     if var == "Test required":
-        return 1.0 if st.toggle(f"Test required for fall {next_year}", value=bool(value), key=key) else 0.0
+        return 1.0 if st.toggle("Require SAT/ACT scores", value=bool(value), key=key) else 0.0
     if var in Y.SHARES:
         lo, hi = max(0.0, round(v) - 15.0), min(100.0, round(v) + 15.0)
         start = float(round(v * 2) / 2)
-        out = st.slider(f"{var} (%)", lo, hi, start, 0.5, key=key, format="%.1f%%")
+        out = st.slider(f"{lab} (%)", lo, hi, start, 0.5, key=key, format="%.1f%%")
     elif var == Y.LAG:
         start = float(round(v * 2) / 2)
         out = st.slider(f"Fall {last_year} yield (%)", 10.0, 90.0, start, 0.5, key=key, format="%.1f%%")
     elif var == "SAT average":
         start = int(v)
-        out = st.slider(var, start - 80, start + 80, start, 5, key=key)
+        out = st.slider(lab, start - 80, start + 80, start, 5, key=key)
     elif var in Y.DOLLARS and v >= 10000:   # show as $58.5k
         k = v / 1000
         step = 0.5 if k < 200 else 5.0
         lo, hi = round(k * 0.6 / step) * step, round(k * 1.4 / step) * step
         start = min(max(round(k / step) * step, lo), hi)
-        out = st.slider(var, lo, hi, start, step, key=key, format="$%.1fk")
+        out = st.slider(lab, lo, hi, start, step, key=key, format="$%.1fk")
         if out == start:
             return value
         return Y.from_plain(var, out * 1000)
@@ -330,7 +347,7 @@ def slider_for(var, value, key):
         step = int(10 ** max(int(np.log10(max(v, 1))) - 2, 0))
         lo, hi = int(v * 0.6 // step * step), int(v * 1.4 // step * step)
         start = min(max(int(round(v / step) * step), lo), hi)
-        out = st.slider(var, lo, hi, start, step, key=key, format="$%d" if var in Y.DOLLARS else "%d")
+        out = st.slider(lab, lo, hi, start, step, key=key, format="$%d" if var in Y.DOLLARS else "%d")
     if out == start:
         return value
     return Y.from_plain(var, out)
@@ -347,50 +364,66 @@ name = schools[uid]
 base_inputs = M["X"].loc[uid, M["fc_feats"]].to_dict()
 base_fc = forecast_for(uid, base_inputs)
 rmse = M["rmse"]
-chapter(5, "forecast", f"We expect {name} to land near {base_fc:.0f}% in fall {next_year}",
-        f"Try changing what {name if uid != Y.BC_ID else 'BC'} controls, like price for low-income families, "
-        "and watch the forecast move.")
+short = name if uid != Y.BC_ID else "BC"
+lo_r, hi_r = base_fc - rmse, base_fc + rmse
+chapter(5, "forecast", f"We expect {name}'s yield to be about {base_fc:.0f}% in fall {next_year}",
+        f"That means about {base_fc:.0f} of every 100 admitted students would enroll. The sliders start at "
+        f"{short}'s real numbers. Move one to see how a change would shift the forecast.")
 levers = [v for v in LEVERS if v in M["fc_feats"]]
 others = [v for v in M["fc_feats"] if v not in levers]
 left, right = st.columns([2, 3])
 with left:
+    st.markdown("**What if " + short + " changed...**")
     scen = {v: slider_for(v, base_inputs[v], f"fc_{uid}_{v}") for v in levers}
-    with st.expander("Other factors (kept at real values)"):
+    with st.expander("More factors the forecast uses"):
         for v in others:
             scen[v] = slider_for(v, base_inputs[v], f"fc_{uid}_{v}")
-    if st.button("Reset"):
+    if st.button("Back to real numbers"):
         for k in [k for k in st.session_state if str(k).startswith(f"fc_{uid}_")]:
             del st.session_state[k]
         st.rerun()
 scen_fc = forecast_for(uid, scen)
 changed = abs(scen_fc - base_fc) >= 0.05
 hist = data[data["UNITID"] == uid].sort_values("fall")
+last_val = float(hist["target"].iloc[-1])
+line_color = MAROON if uid == Y.BC_ID else INK
 with right:
     fig = go.Figure()
-    fig.add_scatter(x=hist["fall"], y=hist["target"], mode="lines+markers", name="Actual",
-                    line=dict(color=MAROON if uid == Y.BC_ID else INK, width=3.5), marker=dict(size=7),
+    fig.add_scatter(x=hist["fall"], y=hist["target"], mode="lines+markers",
+                    line=dict(color=line_color, width=3.5), marker=dict(size=7),
                     hovertemplate="Fall %{x}: %{y:.1f}%<extra></extra>")
-    fig.add_scatter(x=[last_year, next_year], y=[float(hist["target"].iloc[-1]), base_fc], mode="lines",
-                    line=dict(color=MUTED, width=2, dash="dot"), hoverinfo="skip")
-    fig.add_scatter(x=[next_year], y=[base_fc], mode="markers",
-                    error_y=dict(type="constant", value=rmse, color=LIGHT, thickness=4, width=10),
-                    marker=dict(size=13, color="white", line=dict(color=INK, width=2.5)),
-                    hovertemplate=f"Forecast: %{{y:.1f}}% (usually within ±{rmse:.1f} pts)<extra></extra>")
+    fig.add_scatter(x=[last_year, next_year], y=[last_val, base_fc], mode="lines+markers",
+                    line=dict(color=line_color if not changed else MUTED, width=3, dash="dot"),
+                    marker=dict(size=[0, 13], color="white", line=dict(color=line_color if not changed else MUTED,
+                                                                      width=3)),
+                    hovertemplate="Forecast: %{y:.1f}%<extra></extra>")
+    fig.add_annotation(x=last_year, y=last_val, text=f"Fall {last_year}<br><b>{last_val:.0f}%</b>", showarrow=False,
+                       xanchor="right", xshift=-10, font=dict(size=13, color=line_color))
     if changed:
-        fig.add_scatter(x=[next_year], y=[scen_fc], mode="markers",
-                        marker=dict(size=22, symbol="star", color=GOLD, line=dict(color=INK, width=1)),
-                        hovertemplate="Your scenario: %{y:.1f}%<extra></extra>")
-    fig.update_yaxes(title="Yield", ticksuffix="%")
-    fig.update_xaxes(range=[hist["fall"].min() - 0.5, next_year + 0.8], dtick=2)
-    lo_y = min(hist["target"].min(), base_fc - rmse, scen_fc) - 4
-    hi_y = max(hist["target"].max(), base_fc + rmse, scen_fc) + 5
-    fig.update_yaxes(range=[lo_y, hi_y])
+        fig.add_scatter(x=[last_year, next_year], y=[last_val, scen_fc], mode="lines+markers",
+                        line=dict(color=GOLD, width=3, dash="dot"), marker=dict(size=[0, 14], color=GOLD),
+                        hovertemplate="With your changes: %{y:.1f}%<extra></extra>")
+    up = scen_fc >= base_fc
+    fig.add_annotation(x=next_year, y=base_fc, xanchor="left", xshift=12, showarrow=False,
+                       yshift=(-16 if up else 16) if changed else 0, align="left",
+                       text=(f"Forecast {next_year}<br><b>{base_fc:.0f}%</b>" if not changed else f"No changes<br>{base_fc:.0f}%"),
+                       font=dict(size=13, color=INK if not changed else "#888"))
+    if changed:
+        fig.add_annotation(x=next_year, y=scen_fc, xanchor="left", xshift=12, yshift=16 if up else -16,
+                           showarrow=False, align="left", text=f"Your changes<br><b>{scen_fc:.0f}%</b>",
+                           font=dict(size=13, color="#9A7414"))
+    fig.update_yaxes(title=None, ticksuffix="%")
+    ticks = list(range(int(hist["fall"].min()), next_year + 1, 2))
+    fig.update_xaxes(range=[hist["fall"].min() - 0.5, next_year + 5.5], tickvals=ticks, showline=False)
+    fig.update_yaxes(range=[min(hist["target"].min(), scen_fc) - 4, max(hist["target"].max(), scen_fc) + 6])
+    fig.update_layout(margin=dict(r=10), title=dict(text=f"Share of admitted students who enrolled, {short}",
+                                                    font=dict(size=14, color="#555")))
     st.plotly_chart(style(fig, 430, legend=False), width="stretch", config={"displayModeBar": False})
 c1, c2, c3 = st.columns(3)
-stat(c1, f"{base_fc:.1f}%", f"forecast for fall {next_year} (open circle)")
-stat(c2, f"{scen_fc:.1f}%" if changed else "–", "your scenario, gold star" + (f" ({scen_fc - base_fc:+.1f} pts)" if changed else
-                                                                    ": move a slider"))
-stat(c3, f"±{rmse:.0f} pts", "how far off the forecast usually is")
+stat(c1, f"{base_fc:.0f}%", f"forecast yield, fall {next_year}")
+stat(c2, f"{lo_r:.0f}–{hi_r:.0f}%", "likely range (past forecasts were usually this close)")
+stat(c3, f"{scen_fc:.0f}%" if changed else "–",
+     f"with your changes ({scen_fc - base_fc:+.1f} pts)" if changed else "with your changes: move a slider")
 with st.expander("How accurate is the forecast?"):
     bt = M["bt"][M["bt"]["UNITID"] == uid]
     fig = go.Figure()
